@@ -1,0 +1,14 @@
+OpenMacFUSE
+Copyright 2026 The OpenMacFUSE Authors
+
+Developed by the NTFSTool team (https://ntfstool.com). Licensed under the
+MIT License, see LICENSE.
+
+OpenMacFUSE was written from the public specifications RFC 7530, RFC 7531,
+RFC 5531 and RFC 4506 and the public FUSE 2.x high-level API description.
+It contains no third-party source code.
+
+"FUSE" refers to the Filesystem in Userspace API. OpenMacFUSE is an independent
+project. It is not affiliated with or endorsed by macFUSE or its authors,
+nor by the libfuse or fuse-t projects. macOS is a
+trademark of Apple Inc.
