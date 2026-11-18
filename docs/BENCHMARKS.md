@@ -8,7 +8,7 @@ Both sides run the same FUSE file system source: the NTFS driver from NTFSTool P
 
 | Build | Links against | What serves NFS |
 |---|---|---|
-| OpenMacFUSE | `libnfuse.a` (static) | the file system process itself |
+| OpenMacFUSE | `libopenmacfuse.a` (static) | the file system process itself |
 | FUSE-T | `libfuse-t.dylib` from FUSE-T 1.0.49 | the separate NFS server process that FUSE-T ships |
 
 The NTFS driver is not part of this repository, so these tables cannot be re-run from this repository alone. The method is published so that the same comparison can be made with any FUSE 2.x file system that reports stable inode numbers; see [Reproducing](#reproducing).
@@ -48,7 +48,7 @@ Directory listing, 40,000 files, `time ls dir | wc -l`, machine B, same image, m
 | First listing after mount | 4.06 s | 7.90 s |
 | Second listing | 0.53 s | 0.53 s |
 
-The first listing includes the work that keeps `._` AppleDouble files out of the listing (`nfuse_xattr=adfile`, the default).
+The first listing includes the work that keeps `._` AppleDouble files out of the listing (`openmacfuse_xattr=adfile`, the default).
 
 **Not listed: small-file creation.** The file system's default durability setting changed after these runs (a write is now acknowledged only after the data has reached the device), which roughly doubles small-file creation time. The comparison has not been repeated with the new default, so no number is given.
 
@@ -98,10 +98,10 @@ With the guard process disabled, a killed OpenMacFUSE driver leaves the mount in
 ## Reproducing
 
 ```sh
-make                                        # libnfuse.a
+make                                        # libopenmacfuse.a
 cc -O2 -o build/fpsample bench/fpsample.c   # memory sampler: build/fpsample <interval-ms> <pid>...
 ```
 
-Build a FUSE 2.x file system twice, once against `libnfuse.a` and once against the library you want to compare with. Mount the same volume image with each build in turn and run the same commands: `time ls dir | wc -l` on a large directory, `find . -type f -exec md5 {} +` over the volume, `dd` for sequential transfers (with `sync` for writes, and an unmount and remount before reads), and a create/delete loop for churn, with `fpsample` attached to the mount processes. The driver script used for the tables above is tied to the NTFS driver's build layout and is not included.
+Build a FUSE 2.x file system twice, once against `libopenmacfuse.a` and once against the library you want to compare with. Mount the same volume image with each build in turn and run the same commands: `time ls dir | wc -l` on a large directory, `find . -type f -exec md5 {} +` over the volume, `dd` for sequential transfers (with `sync` for writes, and an unmount and remount before reads), and a create/delete loop for churn, with `fpsample` attached to the mount processes. The driver script used for the tables above is tied to the NTFS driver's build layout and is not included.
 
 The raw logs behind the tables above were recorded in Chinese and contain local paths. They are being translated and will be added to this directory before v1.0.

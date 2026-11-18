@@ -17,7 +17,7 @@
  *     NFS4ERR_NO_GRACE.
  *   - named attributes (OPENATTR, and LOOKUP / READDIR / OPEN / READ / WRITE / CREATE /
  *     REMOVE / GETATTR / SETATTR / COMMIT under the attribute directory), active when
- *     s->named_attr is set (nfuse_xattr=streams); attribute values are read and written by
+ *     s->named_attr is set (openmacfuse_xattr=streams); attribute values are read and written by
  *     offset (backend xattr_read / xattr_write) rather than fetched whole.
  *
  * Copyright 2026 The OpenMacFUSE Authors
@@ -44,10 +44,10 @@
 
 /* Execution context of one COMPOUND */
 struct cctx {
-	struct nfuse_server	*s;
+	struct openmacfuse_server	*s;
 	const rpc_cred_t	*cred;
-	struct nfuse_fh		cur;
-	struct nfuse_fh		saved;
+	struct openmacfuse_fh		cur;
+	struct openmacfuse_fh		saved;
 	int			have_cur;
 	int			have_saved;
 	int			keep_err_body;	/* on error the op wrote its own error body (e.g. CLID_INUSE) */
@@ -56,13 +56,13 @@ struct cctx {
 	 * of these owners
 	 */
 	int			nrec;
-	struct nfuse_seq	*rec[2];
+	struct openmacfuse_seq	*rec[2];
 	uint32_t		rec_seqid[2];
 	int			rec_has_other;
 	uint8_t			rec_other[NFS4_OTHER_SIZE];
 	int			replayed;	/* this op's result is a replay; do not record it again */
 	int			open_excl;	/* this op is an OPEN(EXCLUSIVE4) (for the test hook) */
-	unsigned		flags;		/* NFUSE_CF_* */
+	unsigned		flags;		/* OPENMACFUSE_CF_* */
 };
 
 static const char *op_names[] = {
@@ -114,9 +114,9 @@ int nfs4_op_code(const char *name)
 
 /* ---------- Common helpers ---------- */
 
-static int is_pseudo(const struct nfuse_fh *fh)
+static int is_pseudo(const struct openmacfuse_fh *fh)
 {
-	return fh->kind == NFUSE_FH_PSEUDOROOT;
+	return fh->kind == OPENMACFUSE_FH_PSEUDOROOT;
 }
 
 static int be_writable(struct cctx *c)
@@ -127,11 +127,11 @@ static int be_writable(struct cctx *c)
 /* Attribute bitmap requested by the client -> whether getxtimes needs to be called */
 static unsigned want_of(const uint32_t req[NFS4_BITMAP_WORDS])
 {
-	unsigned w = NFUSE_WANT_BASIC;
+	unsigned w = OPENMACFUSE_WANT_BASIC;
 
 	if (req[1] & ((1u << (FATTR4_TIME_BACKUP - 32)) |
 		      (1u << (FATTR4_TIME_CREATE - 32))))
-		w |= NFUSE_WANT_XTIMES;
+		w |= OPENMACFUSE_WANT_XTIMES;
 	return w;
 }
 
@@ -153,7 +153,7 @@ static uint32_t attr_hash(const char *name)
 	return h;
 }
 
-static void attr_ht_put(struct nfuse_server *s, uint32_t id)
+static void attr_ht_put(struct openmacfuse_server *s, uint32_t id)
 {
 	uint32_t m = s->attr_htcap - 1, h = attr_hash(s->attr_names[id]) & m;
 
@@ -166,7 +166,7 @@ static void attr_ht_put(struct nfuse_server *s, uint32_t id)
  * Attribute name -> id (handles carry the id; grow-only, at most 65536 distinct names, looked up
  * through a hash)
  */
-static int attr_intern(struct nfuse_server *s, const char *name, nfuse_ino_t *id)
+static int attr_intern(struct openmacfuse_server *s, const char *name, openmacfuse_ino_t *id)
 {
 	uint32_t i, m, h;
 
@@ -212,12 +212,12 @@ static int attr_intern(struct nfuse_server *s, const char *name, nfuse_ino_t *id
  * Named attributes are writable: the backend has the write callbacks and the volume is not
  * read-only
  */
-static int xattr_writable(struct nfuse_server *s)
+static int xattr_writable(struct openmacfuse_server *s)
 {
 	return !s->be.readonly && s->be.ops->xattr_write;
 }
 
-static const char *attr_name(struct nfuse_server *s, nfuse_ino_t id)
+static const char *attr_name(struct openmacfuse_server *s, openmacfuse_ino_t id)
 {
 	return id < s->nattr_names ? s->attr_names[id] : NULL;
 }
@@ -230,38 +230,38 @@ static const char *attr_name(struct nfuse_server *s, nfuse_ino_t id)
  * Get the attributes of the current object (synthesized separately for the pseudo root and for
  * named attribute directories / attributes)
  */
-static uint32_t fh_attr(struct cctx *c, const struct nfuse_fh *fh,
-			struct nfuse_attr *st, unsigned want)
+static uint32_t fh_attr(struct cctx *c, const struct openmacfuse_fh *fh,
+			struct openmacfuse_attr *st, unsigned want)
 {
 	int rc;
 
 	if (is_pseudo(fh)) {
-		nfuse_attr_pseudoroot(c->s, st);
+		openmacfuse_attr_pseudoroot(c->s, st);
 		return NFS4_OK;
 	}
 	rc = c->s->be.ops->getattr(c->s->be.ctx, fh->ino, st, want);
 	if (rc == -ENOENT)
 		return NFS4ERR_STALE;	/* the object the handle refers to no longer exists */
 	if (rc)
-		return nfuse_errno_to_nfs4(rc);
-	if (fh->kind == NFUSE_FH_ATTRDIR) {
+		return openmacfuse_errno_to_nfs4(rc);
+	if (fh->kind == OPENMACFUSE_FH_ATTRDIR) {
 		st->ino = ATTRDIR_FILEID(fh->ino);
 		st->mode = S_IFDIR | (xattr_writable(c->s) ? 0755 : 0555);
 		st->nlink = 2;
 		st->size = 0;
 		st->used = 0;
 		st->nf4type = NF4ATTRDIR;
-	} else if (fh->kind == NFUSE_FH_ADFILE) {
-		rc = nfuse_adf_attr(c->s, fh->ino, st);
+	} else if (fh->kind == OPENMACFUSE_FH_ADFILE) {
+		rc = openmacfuse_adf_attr(c->s, fh->ino, st);
 		if (rc)
-			return rc == -ENOENT ? NFS4ERR_STALE : nfuse_errno_to_nfs4(rc);
-	} else if (fh->kind == NFUSE_FH_NAMEDATTR) {
+			return rc == -ENOENT ? NFS4ERR_STALE : openmacfuse_errno_to_nfs4(rc);
+	} else if (fh->kind == OPENMACFUSE_FH_NAMEDATTR) {
 		const char *nm = attr_name(c->s, fh->attr_id);
 		if (!nm || !c->s->be.ops->getxattr)
 			return NFS4ERR_STALE;
 		rc = c->s->be.ops->getxattr(c->s->be.ctx, fh->ino, nm, NULL, 0);
 		if (rc < 0)
-			return rc == -ENOATTR ? NFS4ERR_STALE : nfuse_errno_to_nfs4(rc);
+			return rc == -ENOATTR ? NFS4ERR_STALE : openmacfuse_errno_to_nfs4(rc);
 		st->ino = NAMEDATTR_FILEID(fh->ino, fh->attr_id);
 		st->mode = S_IFREG | (xattr_writable(c->s) ? 0644 : 0444);
 		st->nlink = 1;
@@ -272,35 +272,35 @@ static uint32_t fh_attr(struct cctx *c, const struct nfuse_fh *fh,
 	return NFS4_OK;
 }
 
-static uint32_t cur_attr(struct cctx *c, const struct nfuse_fh *fh,
-			 struct nfuse_attr *st)
+static uint32_t cur_attr(struct cctx *c, const struct openmacfuse_fh *fh,
+			 struct openmacfuse_attr *st)
 {
-	return fh_attr(c, fh, st, NFUSE_WANT_BASIC);
+	return fh_attr(c, fh, st, OPENMACFUSE_WANT_BASIC);
 }
 
 /*
  * Handle of an ordinary node: the ancestor chain is obtained from the backend; parent is only a
  * fallback for when the node is not in the table
  */
-static void set_node_fh(struct cctx *c, struct nfuse_fh *fh, nfuse_ino_t ino,
-			nfuse_ino_t parent)
+static void set_node_fh(struct cctx *c, struct openmacfuse_fh *fh, openmacfuse_ino_t ino,
+			openmacfuse_ino_t parent)
 {
 	int n = 0;
 
 	memset(fh, 0, sizeof(*fh));
-	fh->kind = NFUSE_FH_NODE;
+	fh->kind = OPENMACFUSE_FH_NODE;
 	fh->boot = c->s->boot;
 	fh->ino = ino;
 	if (c->s->be.ops->ancestry)
 		n = c->s->be.ops->ancestry(c->s->be.ctx, ino, parent, fh->anc,
-					   NFUSE_FH_MAXANC);
+					   OPENMACFUSE_FH_MAXANC);
 	fh->nanc = (uint8_t)(n > 0 ? n : 0);
 }
 
-static void set_pseudo_fh(struct cctx *c, struct nfuse_fh *fh)
+static void set_pseudo_fh(struct cctx *c, struct openmacfuse_fh *fh)
 {
 	memset(fh, 0, sizeof(*fh));
-	fh->kind = NFUSE_FH_PSEUDOROOT;
+	fh->kind = OPENMACFUSE_FH_PSEUDOROOT;
 	fh->boot = c->s->boot;
 }
 
@@ -335,8 +335,8 @@ static uint32_t get_component(xdr_dec_t *d, char *out, size_t outsz)
  * The current handle must be a directory (named attribute directories included): a symbolic link
  * gets SYMLINK, anything else NOTDIR
  */
-static uint32_t need_dir_fh(struct cctx *c, const struct nfuse_fh *fh,
-			    struct nfuse_attr *st)
+static uint32_t need_dir_fh(struct cctx *c, const struct openmacfuse_fh *fh,
+			    struct openmacfuse_attr *st)
 {
 	uint32_t rc = cur_attr(c, fh, st);
 
@@ -347,7 +347,7 @@ static uint32_t need_dir_fh(struct cctx *c, const struct nfuse_fh *fh,
 	return S_ISLNK(st->mode) ? NFS4ERR_SYMLINK : NFS4ERR_NOTDIR;
 }
 
-static uint32_t need_dir(struct cctx *c, struct nfuse_attr *st)
+static uint32_t need_dir(struct cctx *c, struct openmacfuse_attr *st)
 {
 	if (!c->have_cur)
 		return NFS4ERR_NOFILEHANDLE;
@@ -355,10 +355,10 @@ static uint32_t need_dir(struct cctx *c, struct nfuse_attr *st)
 }
 
 /* Look up a name under directory dirfh (handles the pseudo root and named attribute directories) */
-static uint32_t lookup_name(struct cctx *c, const struct nfuse_fh *dirfh,
-			    const char *name, struct nfuse_fh *out)
+static uint32_t lookup_name(struct cctx *c, const struct openmacfuse_fh *dirfh,
+			    const char *name, struct openmacfuse_fh *out)
 {
-	nfuse_ino_t ino;
+	openmacfuse_ino_t ino;
 	int rc;
 
 	if (is_pseudo(dirfh)) {
@@ -367,7 +367,7 @@ static uint32_t lookup_name(struct cctx *c, const struct nfuse_fh *dirfh,
 		set_node_fh(c, out, c->s->be.ops->root(c->s->be.ctx), 0);
 		return NFS4_OK;
 	}
-	if (dirfh->kind == NFUSE_FH_ATTRDIR) {
+	if (dirfh->kind == OPENMACFUSE_FH_ATTRDIR) {
 		if (!c->s->be.ops->getxattr)
 			return NFS4ERR_NOENT;
 		rc = c->s->be.ops->getxattr(c->s->be.ctx, dirfh->ino, name, NULL, 0);
@@ -384,7 +384,7 @@ static uint32_t lookup_name(struct cctx *c, const struct nfuse_fh *dirfh,
 		if (attr_intern(c->s, name, &ino))
 			return NFS4ERR_RESOURCE;
 		memset(out, 0, sizeof(*out));
-		out->kind = NFUSE_FH_NAMEDATTR;
+		out->kind = OPENMACFUSE_FH_NAMEDATTR;
 		out->boot = c->s->boot;
 		out->ino = dirfh->ino;
 		out->attr_id = ino;
@@ -392,31 +392,31 @@ static uint32_t lookup_name(struct cctx *c, const struct nfuse_fh *dirfh,
 		 * carry along the owning file's ancestor chain (so PUTFH can still find it after
 		 * the node has been evicted)
 		 */
-		out->nanc = dirfh->nanc > NFUSE_FH_MAXANC - 1 ? NFUSE_FH_MAXANC - 1 : dirfh->nanc;
+		out->nanc = dirfh->nanc > OPENMACFUSE_FH_MAXANC - 1 ? OPENMACFUSE_FH_MAXANC - 1 : dirfh->nanc;
 		memcpy(out->anc, dirfh->anc, sizeof(out->anc[0]) * out->nanc);
 		return NFS4_OK;
 	}
-	if (c->s->adfile && dirfh->kind == NFUSE_FH_NODE && nfuse_adf_target(name)) {
+	if (c->s->adfile && dirfh->kind == OPENMACFUSE_FH_NODE && openmacfuse_adf_target(name)) {
 		/*
 		 * `._X`: X exists and has extended attributes -> virtual file; X exists but has
 		 * no attributes -> does not exist (unless there is a real file on disk that is
 		 * not AppleDouble)
 		 */
-		nfuse_ino_t x;
+		openmacfuse_ino_t x;
 		int ex;
-		int lr = nfuse_adf_lookup(c->s, dirfh->ino, name, &x, &ex);
+		int lr = openmacfuse_adf_lookup(c->s, dirfh->ino, name, &x, &ex);
 
 		if (c->s->verbose && c->s->log)
 			c->s->log("LOOKUP virtual %s: %d exists=%d", name, lr, ex);
 		if (lr == 0 && ex) {
 			set_node_fh(c, out, x, dirfh->ino);
-			out->kind = NFUSE_FH_ADFILE;
+			out->kind = OPENMACFUSE_FH_ADFILE;
 			return NFS4_OK;
 		}
 	}
 	rc = c->s->be.ops->lookup(c->s->be.ctx, dirfh->ino, name, &ino);
 	if (rc)
-		return nfuse_errno_to_nfs4(rc);
+		return openmacfuse_errno_to_nfs4(rc);
 	set_node_fh(c, out, ino, dirfh->ino);
 	return NFS4_OK;
 }
@@ -427,13 +427,13 @@ static uint32_t lookup_name(struct cctx *c, const struct nfuse_fh *dirfh,
  * point the header and the resource fork may be only half written: parse and write back only when
  * the last open state is closed.
  */
-static int adf_opens(struct nfuse_server *s, nfuse_ino_t x)
+static int adf_opens(struct openmacfuse_server *s, openmacfuse_ino_t x)
 {
-	struct nfuse_open *op;
+	struct openmacfuse_open *op;
 	int n = 0;
 
 	for (op = s->opens; op; op = op->next)
-		if (op->kind == NFUSE_FH_ADFILE && op->ino == x)
+		if (op->kind == OPENMACFUSE_FH_ADFILE && op->ino == x)
 			n++;
 	return n;
 }
@@ -442,21 +442,21 @@ static int adf_opens(struct nfuse_server *s, nfuse_ino_t x)
  * REMOVE / RENAME / CREATE on a `._X`: returns 1 if X exists (*x is X), to be handled as a
  * virtual file
  */
-static int adf_name(struct cctx *c, const struct nfuse_fh *dirfh, const char *name,
-		    nfuse_ino_t *x, int *exists)
+static int adf_name(struct cctx *c, const struct openmacfuse_fh *dirfh, const char *name,
+		    openmacfuse_ino_t *x, int *exists)
 {
-	if (!c->s->adfile || dirfh->kind != NFUSE_FH_NODE || !nfuse_adf_target(name))
+	if (!c->s->adfile || dirfh->kind != OPENMACFUSE_FH_NODE || !openmacfuse_adf_target(name))
 		return 0;
-	return nfuse_adf_lookup(c->s, dirfh->ino, name, x, exists) == 0;
+	return openmacfuse_adf_lookup(c->s, dirfh->ino, name, x, exists) == 0;
 }
 
-static void put_stateid(xdr_enc_t *e, const struct nfuse_stateid *sid)
+static void put_stateid(xdr_enc_t *e, const struct openmacfuse_stateid *sid)
 {
 	xdr_put_u32(e, sid->seqid);
 	xdr_put_fixed(e, sid->other, NFS4_OTHER_SIZE);
 }
 
-static void get_stateid(xdr_dec_t *d, struct nfuse_stateid *sid)
+static void get_stateid(xdr_dec_t *d, struct openmacfuse_stateid *sid)
 {
 	sid->seqid = xdr_get_u32(d);
 	xdr_get_fixed(d, sid->other, NFS4_OTHER_SIZE);
@@ -477,9 +477,9 @@ static void put_change_info(xdr_enc_t *e, uint64_t before, uint64_t after)
  * The directory's current change value (it was just modified and the backend has invalidated its
  * cache, so this fetches the new value)
  */
-static uint64_t dir_change(struct cctx *c, const struct nfuse_fh *dir)
+static uint64_t dir_change(struct cctx *c, const struct openmacfuse_fh *dir)
 {
-	struct nfuse_attr st;
+	struct openmacfuse_attr st;
 
 	if (cur_attr(c, dir, &st))
 		return 0;
@@ -488,7 +488,7 @@ static uint64_t dir_change(struct cctx *c, const struct nfuse_fh *dir)
 
 /* ---------- seqid replay ---------- */
 
-static uint32_t seq_replay(struct cctx *c, struct nfuse_seq *q, xdr_enc_t *e)
+static uint32_t seq_replay(struct cctx *c, struct openmacfuse_seq *q, xdr_enc_t *e)
 {
 	if (q->len)
 		xdr_put_fixed(e, q->body, q->len);
@@ -506,7 +506,7 @@ static uint32_t seq_replay(struct cctx *c, struct nfuse_seq *q, xdr_enc_t *e)
 }
 
 /* When this op finishes, record its result in the owner's replay cache */
-static void seq_will_record(struct cctx *c, struct nfuse_seq *q, uint32_t seqid)
+static void seq_will_record(struct cctx *c, struct openmacfuse_seq *q, uint32_t seqid)
 {
 	if (c->nrec < 2) {
 		c->rec[c->nrec] = q;
@@ -519,18 +519,18 @@ static void seq_will_record(struct cctx *c, struct nfuse_seq *q, uint32_t seqid)
  * An unconfirmed open-owner receives a new OPEN: treat it as a new owner and discard its earlier
  * open state
  */
-static void owner_reset(struct cctx *c, struct nfuse_owner *ow)
+static void owner_reset(struct cctx *c, struct openmacfuse_owner *ow)
 {
-	struct nfuse_open *op, *nx;
+	struct openmacfuse_open *op, *nx;
 
 	for (op = c->s->opens; op; op = nx) {
 		nx = op->next;
 		if (op->owner != ow)
 			continue;
-		if (op->kind == NFUSE_FH_NODE && c->s->be.ops->release)
+		if (op->kind == OPENMACFUSE_FH_NODE && c->s->be.ops->release)
 			c->s->be.ops->release(c->s->be.ctx, op->ino, op->befh);
-		nfuse_lock_detach_open(c->s, op);
-		nfuse_open_free(c->s, op);
+		openmacfuse_lock_detach_open(c->s, op);
+		openmacfuse_open_free(c->s, op);
 	}
 	ow->seq.valid = 0;
 }
@@ -594,7 +594,7 @@ static uint32_t get_owner_id(xdr_dec_t *d, int group, uint32_t *out)
  * Decode the attributes to be set from a fattr4; set receives the accepted bits.
  * Read-only attribute -> INVAL; unsupported -> ATTRNOTSUPP; parse error -> BADXDR.
  */
-static uint32_t get_sattr(xdr_dec_t *d, struct nfuse_sattr *sa,
+static uint32_t get_sattr(xdr_dec_t *d, struct openmacfuse_sattr *sa,
 			  uint32_t set[NFS4_BITMAP_WORDS])
 {
 	uint32_t bm[NFS4_BITMAP_WORDS], sup[NFS4_BITMAP_WORDS], alen, rc = NFS4_OK;
@@ -608,7 +608,7 @@ static uint32_t get_sattr(xdr_dec_t *d, struct nfuse_sattr *sa,
 	ap = xdr_get_opaque_ref(d, 65536, &alen);
 	if (d->err)
 		return NFS4ERR_BADXDR;
-	nfuse_attr_supported(sup);
+	openmacfuse_attr_supported(sup);
 	xdr_dec_init(&a, ap, alen);
 	for (i = 0; i < 32 * NFS4_BITMAP_WORDS && rc == NFS4_OK; i++) {
 		uint32_t v, how;
@@ -618,19 +618,19 @@ static uint32_t get_sattr(xdr_dec_t *d, struct nfuse_sattr *sa,
 		switch (i) {
 		case FATTR4_SIZE:
 			sa->size = xdr_get_u64(&a);
-			sa->mask |= NFUSE_SA_SIZE;
+			sa->mask |= OPENMACFUSE_SA_SIZE;
 			break;
 		case FATTR4_MODE:
 			sa->mode = xdr_get_u32(&a) & 07777;
-			sa->mask |= NFUSE_SA_MODE;
+			sa->mask |= OPENMACFUSE_SA_MODE;
 			break;
 		case FATTR4_OWNER:
 			rc = get_owner_id(&a, 0, &sa->uid);
-			sa->mask |= NFUSE_SA_UID;
+			sa->mask |= OPENMACFUSE_SA_UID;
 			break;
 		case FATTR4_OWNER_GROUP:
 			rc = get_owner_id(&a, 1, &sa->gid);
-			sa->mask |= NFUSE_SA_GID;
+			sa->mask |= OPENMACFUSE_SA_GID;
 			break;
 		case FATTR4_TIME_ACCESS_SET:
 		case FATTR4_TIME_MODIFY_SET: {
@@ -639,9 +639,9 @@ static uint32_t get_sattr(xdr_dec_t *d, struct nfuse_sattr *sa,
 			how = xdr_get_u32(&a);
 			if (how == 1) {		/* SET_TO_CLIENT_TIME4 */
 				rc = get_nfstime(&a, isa ? &sa->atime : &sa->mtime);
-				sa->mask |= isa ? NFUSE_SA_ATIME : NFUSE_SA_MTIME;
+				sa->mask |= isa ? OPENMACFUSE_SA_ATIME : OPENMACFUSE_SA_MTIME;
 			} else if (how == 0) {	/* SET_TO_SERVER_TIME4 */
-				sa->mask |= isa ? NFUSE_SA_ATIME_NOW : NFUSE_SA_MTIME_NOW;
+				sa->mask |= isa ? OPENMACFUSE_SA_ATIME_NOW : OPENMACFUSE_SA_MTIME_NOW;
 			} else {
 				rc = NFS4ERR_BADXDR;
 			}
@@ -649,11 +649,11 @@ static uint32_t get_sattr(xdr_dec_t *d, struct nfuse_sattr *sa,
 		}
 		case FATTR4_TIME_CREATE:
 			rc = get_nfstime(&a, &sa->crtime);
-			sa->mask |= NFUSE_SA_CRTIME;
+			sa->mask |= OPENMACFUSE_SA_CRTIME;
 			break;
 		case FATTR4_TIME_BACKUP:
 			rc = get_nfstime(&a, &sa->bkuptime);
-			sa->mask |= NFUSE_SA_BKUPTIME;
+			sa->mask |= OPENMACFUSE_SA_BKUPTIME;
 			break;
 		case FATTR4_HIDDEN:
 		case FATTR4_ARCHIVE: {
@@ -664,7 +664,7 @@ static uint32_t get_sattr(xdr_dec_t *d, struct nfuse_sattr *sa,
 				sa->flags_set |= bit;
 			else
 				sa->flags_clear |= bit;
-			sa->mask |= NFUSE_SA_FLAGS;
+			sa->mask |= OPENMACFUSE_SA_FLAGS;
 			break;
 		}
 		case FATTR4_SYSTEM:
@@ -698,26 +698,26 @@ static uint32_t get_sattr(xdr_dec_t *d, struct nfuse_sattr *sa,
 }
 
 /* Attribute bits corresponding to a sattr (the attrsset returned to the client on success) */
-static void sattr_bits(const struct nfuse_sattr *sa, uint32_t out[NFS4_BITMAP_WORDS])
+static void sattr_bits(const struct openmacfuse_sattr *sa, uint32_t out[NFS4_BITMAP_WORDS])
 {
 	memset(out, 0, sizeof(uint32_t) * NFS4_BITMAP_WORDS);
-	if (sa->mask & NFUSE_SA_SIZE)
+	if (sa->mask & OPENMACFUSE_SA_SIZE)
 		bm_set(out, FATTR4_SIZE);
-	if (sa->mask & NFUSE_SA_MODE)
+	if (sa->mask & OPENMACFUSE_SA_MODE)
 		bm_set(out, FATTR4_MODE);
-	if (sa->mask & NFUSE_SA_UID)
+	if (sa->mask & OPENMACFUSE_SA_UID)
 		bm_set(out, FATTR4_OWNER);
-	if (sa->mask & NFUSE_SA_GID)
+	if (sa->mask & OPENMACFUSE_SA_GID)
 		bm_set(out, FATTR4_OWNER_GROUP);
-	if (sa->mask & (NFUSE_SA_ATIME | NFUSE_SA_ATIME_NOW))
+	if (sa->mask & (OPENMACFUSE_SA_ATIME | OPENMACFUSE_SA_ATIME_NOW))
 		bm_set(out, FATTR4_TIME_ACCESS_SET);
-	if (sa->mask & (NFUSE_SA_MTIME | NFUSE_SA_MTIME_NOW))
+	if (sa->mask & (OPENMACFUSE_SA_MTIME | OPENMACFUSE_SA_MTIME_NOW))
 		bm_set(out, FATTR4_TIME_MODIFY_SET);
-	if (sa->mask & NFUSE_SA_CRTIME)
+	if (sa->mask & OPENMACFUSE_SA_CRTIME)
 		bm_set(out, FATTR4_TIME_CREATE);
-	if (sa->mask & NFUSE_SA_BKUPTIME)
+	if (sa->mask & OPENMACFUSE_SA_BKUPTIME)
 		bm_set(out, FATTR4_TIME_BACKUP);
-	if (sa->mask & NFUSE_SA_FLAGS) {
+	if (sa->mask & OPENMACFUSE_SA_FLAGS) {
 		if ((sa->flags_set | sa->flags_clear) & UF_HIDDEN)
 			bm_set(out, FATTR4_HIDDEN);
 		if ((sa->flags_set | sa->flags_clear) & SF_ARCHIVED)
@@ -733,7 +733,7 @@ static uint32_t setattr_err(int r)
 {
 	if (r == -ENOTSUP || r == -EOPNOTSUPP)
 		return NFS4ERR_ATTRNOTSUPP;
-	return nfuse_errno_to_nfs4(r);
+	return openmacfuse_errno_to_nfs4(r);
 }
 
 /* ---------- File handle operations ---------- */
@@ -761,14 +761,14 @@ static uint32_t op_putfh(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	(void)e;
 	if (d->err)
 		return NFS4ERR_BADXDR;
-	rc = nfuse_fh_decode(c->s, p, len, &c->cur);
+	rc = openmacfuse_fh_decode(c->s, p, len, &c->cur);
 	if (rc) {
 		c->have_cur = 0;
 		if (rc == NFS4ERR_STALE)
 			c->s->stale_fh++;
 		return rc;
 	}
-	if (c->cur.kind != NFUSE_FH_PSEUDOROOT && c->s->be.ops->resolve) {
+	if (c->cur.kind != OPENMACFUSE_FH_PSEUDOROOT && c->s->be.ops->resolve) {
 		/*
 		 * the node table may have evicted this inode: find it again along the ancestor
 		 * chain in the handle; only if that fails is it STALE
@@ -779,7 +779,7 @@ static uint32_t op_putfh(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 			c->have_cur = 0;
 			c->s->stale_fh++;
 			return r == -ESTALE || r == -ENOENT ? NFS4ERR_STALE :
-			       nfuse_errno_to_nfs4(r);
+			       openmacfuse_errno_to_nfs4(r);
 		}
 	}
 	c->have_cur = 1;
@@ -788,13 +788,13 @@ static uint32_t op_putfh(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 
 static uint32_t op_getfh(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
-	uint8_t raw[NFUSE_FH_MAXLEN];
+	uint8_t raw[OPENMACFUSE_FH_MAXLEN];
 	uint32_t len;
 
 	(void)d;
 	if (!c->have_cur)
 		return NFS4ERR_NOFILEHANDLE;
-	len = nfuse_fh_encode(&c->cur, raw);
+	len = openmacfuse_fh_encode(&c->cur, raw);
 	xdr_put_opaque(e, raw, len);
 	return NFS4_OK;
 }
@@ -822,8 +822,8 @@ static uint32_t op_restorefh(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 static uint32_t op_lookup(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
 	char name[256];
-	struct nfuse_attr st;
-	struct nfuse_fh nfh;
+	struct openmacfuse_attr st;
+	struct openmacfuse_fh nfh;
 	uint32_t rc = get_component(d, name, sizeof(name));
 
 	(void)e;
@@ -847,8 +847,8 @@ static uint32_t op_lookup(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 
 static uint32_t op_lookupp(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
-	struct nfuse_attr st;
-	nfuse_ino_t ino, gp = 0, root;
+	struct openmacfuse_attr st;
+	openmacfuse_ino_t ino, gp = 0, root;
 	uint32_t rc;
 	int r;
 
@@ -858,7 +858,7 @@ static uint32_t op_lookupp(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		return rc;
 	if (is_pseudo(&c->cur))
 		return NFS4ERR_NOENT;
-	if (c->cur.kind == NFUSE_FH_ATTRDIR) {
+	if (c->cur.kind == OPENMACFUSE_FH_ATTRDIR) {
 		/* the "parent" of a named attribute directory is the file it belongs to */
 		ino = c->cur.ino;
 		if (c->s->be.ops->lookupp(c->s->be.ctx, ino, &gp))
@@ -875,7 +875,7 @@ static uint32_t op_lookupp(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	}
 	r = c->s->be.ops->lookupp(c->s->be.ctx, c->cur.ino, &ino);
 	if (r)
-		return nfuse_errno_to_nfs4(r);
+		return openmacfuse_errno_to_nfs4(r);
 	if (ino != root && c->s->be.ops->lookupp(c->s->be.ctx, ino, &gp))
 		gp = 0;
 	set_node_fh(c, &c->cur, ino, gp);
@@ -898,9 +898,9 @@ static uint32_t op_openattr(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		return NFS4ERR_NOFILEHANDLE;
 	if (!c->s->named_attr || !c->s->be.ops->listxattr)
 		return NFS4ERR_NOTSUPP;
-	if (c->cur.kind != NFUSE_FH_NODE)
+	if (c->cur.kind != OPENMACFUSE_FH_NODE)
 		return NFS4ERR_INVAL;
-	c->cur.kind = NFUSE_FH_ATTRDIR;
+	c->cur.kind = OPENMACFUSE_FH_ATTRDIR;
 	c->cur.attr_id = 0;
 	c->s->namedattr_ops++;
 	return NFS4_OK;
@@ -911,7 +911,7 @@ static uint32_t op_openattr(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 static uint32_t op_getattr(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
 	uint32_t req[NFS4_BITMAP_WORDS];
-	struct nfuse_attr st;
+	struct openmacfuse_attr st;
 	uint32_t rc;
 
 	xdr_get_bitmap(d, req, NFS4_BITMAP_WORDS);
@@ -926,7 +926,7 @@ static uint32_t op_getattr(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	rc = fh_attr(c, &c->cur, &st, want_of(req));
 	if (rc)
 		return rc;
-	nfuse_attr_encode(c->s, e, req, &c->cur, &st, NFS4_OK);
+	openmacfuse_attr_encode(c->s, e, req, &c->cur, &st, NFS4_OK);
 	return NFS4_OK;
 }
 
@@ -940,7 +940,7 @@ static uint32_t op_getattr(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 static uint32_t op_access(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
 	uint32_t want = xdr_get_u32(d), grant = 0, perm;
-	struct nfuse_attr st;
+	struct openmacfuse_attr st;
 	uint32_t rc, i;
 	int isdir, ingroup = 0;
 
@@ -975,7 +975,7 @@ static uint32_t op_access(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	if (c->cred->uid == 0 && !isdir && !(st.mode & 0111))
 		grant &= ~ACCESS4_EXECUTE;
 
-	if (c->cur.kind == NFUSE_FH_NODE && c->s->be.ops->access) {
+	if (c->cur.kind == OPENMACFUSE_FH_NODE && c->s->be.ops->access) {
 		void *b = c->s->be.ctx;
 		int r;
 
@@ -1008,8 +1008,8 @@ static uint32_t op_access(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		}
 	}
 	if (is_pseudo(&c->cur) ||
-	    ((c->cur.kind == NFUSE_FH_ATTRDIR || c->cur.kind == NFUSE_FH_NAMEDATTR ||
-	      c->cur.kind == NFUSE_FH_ADFILE) && !xattr_writable(c->s)))
+	    ((c->cur.kind == OPENMACFUSE_FH_ATTRDIR || c->cur.kind == OPENMACFUSE_FH_NAMEDATTR ||
+	      c->cur.kind == OPENMACFUSE_FH_ADFILE) && !xattr_writable(c->s)))
 		grant &= ~(ACCESS4_MODIFY | ACCESS4_EXTEND | ACCESS4_DELETE);
 
 	want &= ACCESS4_READ | ACCESS4_LOOKUP | ACCESS4_MODIFY |
@@ -1026,7 +1026,7 @@ struct rd_state {
 	xdr_enc_t	*e;
 	uint32_t	req[NFS4_BITMAP_WORDS];
 	unsigned	want;
-	struct nfuse_fh	dirfh;
+	struct openmacfuse_fh	dirfh;
 	size_t		start;		/* start of READDIR4resok (before the cookieverf) */
 	uint32_t	maxcount;
 	uint32_t	dircount;
@@ -1052,12 +1052,12 @@ static int rd_need_attrs(const uint32_t req[NFS4_BITMAP_WORDS])
 	return w0 || w1;
 }
 
-static int rd_fill(void *arg, const struct nfuse_dirent *de)
+static int rd_fill(void *arg, const struct openmacfuse_dirent *de)
 {
 	struct rd_state *r = arg;
-	struct nfuse_attr st;
-	const struct nfuse_attr *pst = de->attr;
-	struct nfuse_fh fh;
+	struct openmacfuse_attr st;
+	const struct openmacfuse_attr *pst = de->attr;
+	struct openmacfuse_fh fh;
 	size_t mark = r->e->len;
 	uint32_t err = NFS4_OK, namelen = (uint32_t)strlen(de->name);
 
@@ -1066,14 +1066,14 @@ static int rd_fill(void *arg, const struct nfuse_dirent *de)
 		r->full = 1;
 		return 1;
 	}
-	if (r->dirfh.kind == NFUSE_FH_ATTRDIR) {
+	if (r->dirfh.kind == OPENMACFUSE_FH_ATTRDIR) {
 		/* named attribute directory: de->ino is the attribute name id */
 		memset(&fh, 0, sizeof(fh));
-		fh.kind = NFUSE_FH_NAMEDATTR;
+		fh.kind = OPENMACFUSE_FH_NAMEDATTR;
 		fh.boot = r->c->s->boot;
 		fh.ino = r->dirfh.ino;
 		fh.attr_id = de->ino;
-		if (fh_attr(r->c, &fh, &st, NFUSE_WANT_BASIC)) {
+		if (fh_attr(r->c, &fh, &st, OPENMACFUSE_WANT_BASIC)) {
 			memset(&st, 0, sizeof(st));
 			err = NFS4ERR_STALE;
 		}
@@ -1090,7 +1090,7 @@ static int rd_fill(void *arg, const struct nfuse_dirent *de)
 				 */
 				memset(&st, 0, sizeof(st));
 				st.ino = de->ino;
-				err = nfuse_errno_to_nfs4(rc);
+				err = openmacfuse_errno_to_nfs4(rc);
 			}
 			pst = &st;
 		}
@@ -1109,9 +1109,9 @@ static int rd_fill(void *arg, const struct nfuse_dirent *de)
 		uint32_t only[NFS4_BITMAP_WORDS] = { 0 };
 		if (r->req[0] & (1u << FATTR4_RDATTR_ERROR))
 			only[0] = 1u << FATTR4_RDATTR_ERROR;
-		nfuse_attr_encode(r->c->s, r->e, only, &fh, pst, err);
+		openmacfuse_attr_encode(r->c->s, r->e, only, &fh, pst, err);
 	} else {
-		nfuse_attr_encode(r->c->s, r->e, r->req, &fh, pst, NFS4_OK);
+		openmacfuse_attr_encode(r->c->s, r->e, r->req, &fh, pst, NFS4_OK);
 	}
 	/* also leave 8 bytes for the trailing "no next entry + eof" */
 	if (r->e->err || r->e->len - r->start + 8 > r->maxcount) {
@@ -1151,8 +1151,8 @@ static int rd_attrdir(struct cctx *c, struct rd_state *r, uint64_t pos, int *eof
 		}
 	}
 	for (p = buf; buf && p < buf + n; p += strlen(p) + 1, idx++) {
-		nfuse_ino_t id;
-		struct nfuse_dirent de;
+		openmacfuse_ino_t id;
+		struct openmacfuse_dirent de;
 
 		if (idx < pos || !*p)
 			continue;
@@ -1176,7 +1176,7 @@ out:
 static uint32_t op_readdir(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
 	struct rd_state r;
-	struct nfuse_attr st;
+	struct openmacfuse_attr st;
 	uint64_t cookie, pos, verf64;
 	uint8_t verf[NFS4_VERIFIER_SIZE];
 	uint32_t rc;
@@ -1209,7 +1209,7 @@ static uint32_t op_readdir(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 
 	if (is_pseudo(&c->cur)) {
 		/* the pseudo root contains only one entry, the export directory */
-		struct nfuse_dirent de = {
+		struct openmacfuse_dirent de = {
 			.name = c->s->export_name,
 			.ino = c->s->be.ops->root(c->s->be.ctx),
 			.pos = 1,
@@ -1218,20 +1218,20 @@ static uint32_t op_readdir(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		if (pos == 0)
 			rd_fill(&r, &de);
 		eof = !r.full;
-	} else if (c->cur.kind == NFUSE_FH_ATTRDIR) {
+	} else if (c->cur.kind == OPENMACFUSE_FH_ATTRDIR) {
 		verf64 = c->s->boot;
 		b = rd_attrdir(c, &r, pos, &eof);
 		if (b)
-			return nfuse_errno_to_nfs4(b);
+			return openmacfuse_errno_to_nfs4(b);
 		if (r.full)
 			eof = 0;
 	} else {
 		b = c->s->be.ops->readdir(c->s->be.ctx, c->cur.ino, pos, &verf64,
 					  r.want, rd_fill, &r, &eof);
 		if (b) {
-			if (b == -NFUSE_E_NOT_SAME)
+			if (b == -OPENMACFUSE_E_NOT_SAME)
 				c->s->readdir_notsame++;
-			return nfuse_errno_to_nfs4(b);
+			return openmacfuse_errno_to_nfs4(b);
 		}
 		if (r.full)
 			eof = 0;
@@ -1246,7 +1246,7 @@ static uint32_t op_readdir(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 
 static uint32_t op_readlink(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
-	struct nfuse_attr st;
+	struct openmacfuse_attr st;
 	char buf[4096];
 	uint32_t rc;
 	int r;
@@ -1262,7 +1262,7 @@ static uint32_t op_readlink(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		return NFS4ERR_INVAL;
 	r = c->s->be.ops->readlink(c->s->be.ctx, c->cur.ino, buf, sizeof(buf));
 	if (r)
-		return nfuse_errno_to_nfs4(r);
+		return openmacfuse_errno_to_nfs4(r);
 	xdr_put_string(e, buf);
 	return NFS4_OK;
 }
@@ -1288,7 +1288,7 @@ static uint32_t op_setclientid(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	(void)xdr_get_u32(d);
 	if (d->err)
 		return NFS4ERR_BADXDR;
-	rc = nfuse_setclientid(c->s, verf, id, idlen, &clientid, confirm);
+	rc = openmacfuse_setclientid(c->s, verf, id, idlen, &clientid, confirm);
 	if (rc)
 		return rc;
 	xdr_put_u64(e, clientid);
@@ -1305,7 +1305,7 @@ static uint32_t op_setclientid_confirm(struct cctx *c, xdr_dec_t *d, xdr_enc_t *
 	xdr_get_fixed(d, confirm, 8);
 	if (d->err)
 		return NFS4ERR_BADXDR;
-	return nfuse_setclientid_confirm(c->s, clientid, confirm);
+	return openmacfuse_setclientid_confirm(c->s, clientid, confirm);
 }
 
 static uint32_t op_renew(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
@@ -1315,15 +1315,15 @@ static uint32_t op_renew(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	(void)e;
 	if (d->err)
 		return NFS4ERR_BADXDR;
-	return nfuse_renew(c->s, clientid);
+	return openmacfuse_renew(c->s, clientid);
 }
 
 /* SECINFO: only AUTH_SYS is offered. Per the RFC, the current handle is consumed on success */
 static uint32_t op_secinfo(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
 	char name[256];
-	struct nfuse_attr st;
-	struct nfuse_fh nfh;
+	struct openmacfuse_attr st;
+	struct openmacfuse_fh nfh;
 	uint32_t rc = get_component(d, name, sizeof(name));
 
 	if (rc == NFS4ERR_BADXDR)
@@ -1346,21 +1346,21 @@ static uint32_t op_secinfo(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 
 /* ---------- Open / close ---------- */
 
-static int open_matches(const struct nfuse_open *op, const struct nfuse_fh *fh)
+static int open_matches(const struct openmacfuse_open *op, const struct openmacfuse_fh *fh)
 {
 	return op->ino == fh->ino && op->kind == fh->kind &&
-	       (fh->kind != NFUSE_FH_NAMEDATTR || op->attr_id == fh->attr_id);
+	       (fh->kind != OPENMACFUSE_FH_NAMEDATTR || op->attr_id == fh->attr_id);
 }
 
 /*
  * Share reservation conflict: another owner's deny blocks the access I want, or my deny blocks
  * access another owner already has
  */
-static int share_conflict(struct cctx *c, const struct nfuse_fh *fh,
-			  const struct nfuse_owner *me, uint32_t access,
+static int share_conflict(struct cctx *c, const struct openmacfuse_fh *fh,
+			  const struct openmacfuse_owner *me, uint32_t access,
 			  uint32_t deny)
 {
-	struct nfuse_open *op;
+	struct openmacfuse_open *op;
 
 	for (op = c->s->opens; op; op = op->next) {
 		if (op->owner == me || !open_matches(op, fh))
@@ -1375,19 +1375,19 @@ static int share_conflict(struct cctx *c, const struct nfuse_fh *fh,
  * The EXCLUSIVE4 verifier is stored in the seconds of atime / mtime (the usual approach, RFC 7530
  * section 16.16.5)
  */
-static void verf_to_sattr(const uint8_t v[8], struct nfuse_sattr *sa)
+static void verf_to_sattr(const uint8_t v[8], struct openmacfuse_sattr *sa)
 {
 	memset(sa, 0, sizeof(*sa));
-	sa->mask = NFUSE_SA_ATIME | NFUSE_SA_MTIME;
+	sa->mask = OPENMACFUSE_SA_ATIME | OPENMACFUSE_SA_MTIME;
 	sa->atime.tv_sec = (time_t)(((uint32_t)v[0] << 24) | ((uint32_t)v[1] << 16) |
 				    ((uint32_t)v[2] << 8) | v[3]);
 	sa->mtime.tv_sec = (time_t)(((uint32_t)v[4] << 24) | ((uint32_t)v[5] << 16) |
 				    ((uint32_t)v[6] << 8) | v[7]);
 }
 
-static int verf_matches(const uint8_t v[8], const struct nfuse_attr *st)
+static int verf_matches(const uint8_t v[8], const struct openmacfuse_attr *st)
 {
-	struct nfuse_sattr sa;
+	struct openmacfuse_sattr sa;
 
 	verf_to_sattr(v, &sa);
 	return st->atime.tv_sec == sa.atime.tv_sec && st->atime.tv_nsec == 0 &&
@@ -1404,13 +1404,13 @@ static uint32_t op_open(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	const uint8_t *owner;
 	uint8_t verf[NFS4_VERIFIER_SIZE];
 	char name[256];
-	struct nfuse_sattr sa;
-	struct nfuse_attr dst, st;
-	struct nfuse_fh dirfh, nfh;
-	struct nfuse_owner *ow;
-	struct nfuse_open *op;
+	struct openmacfuse_sattr sa;
+	struct openmacfuse_attr dst, st;
+	struct openmacfuse_fh dirfh, nfh;
+	struct openmacfuse_owner *ow;
+	struct openmacfuse_open *op;
 	uint64_t befh = 0;
-	nfuse_ino_t adx = 0;
+	openmacfuse_ino_t adx = 0;
 	int created = 0, r, need_write, adex = 0;
 
 	memset(&sa, 0, sizeof(sa));
@@ -1444,7 +1444,7 @@ static uint32_t op_open(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		(void)xdr_get_u32(d);		/* delegate_type */
 		break;
 	case CLAIM_DELEGATE_CUR: {
-		struct nfuse_stateid ds;
+		struct openmacfuse_stateid ds;
 		get_stateid(d, &ds);
 		namerc = get_component(d, name, sizeof(name));
 		break;
@@ -1466,7 +1466,7 @@ static uint32_t op_open(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	 * it recovers within a second. When the clientid is valid, go through the normal owner
 	 * seqid processing before returning NO_GRACE (NO_GRACE has to advance the seqid).
 	 */
-	rc = nfuse_check_clientid(c->s, clientid);
+	rc = openmacfuse_check_clientid(c->s, clientid);
 	if (rc) {
 		if (claim == CLAIM_PREVIOUS) {
 			c->s->no_grace++;
@@ -1480,12 +1480,12 @@ static uint32_t op_open(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	{
 		static uint32_t sweep_tick;
 		if ((++sweep_tick & 255) == 0)
-			nfuse_owners_sweep(c->s);
+			openmacfuse_owners_sweep(c->s);
 	}
-	ow = nfuse_owner_get(c->s, clientid, owner, ownerlen, 1);
+	ow = openmacfuse_owner_get(c->s, clientid, owner, ownerlen, 1);
 	if (!ow)
 		return NFS4ERR_RESOURCE;
-	r = nfuse_seq_check(&ow->seq, seqid, OP_OPEN);
+	r = openmacfuse_seq_check(&ow->seq, seqid, OP_OPEN);
 	if (r == 1)
 		return seq_replay(c, &ow->seq, e);
 	if (r < 0) {
@@ -1524,13 +1524,13 @@ static uint32_t op_open(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	rc = lookup_name(c, &dirfh, name, &nfh);
 	if (c->s->verbose && c->s->log)
 		c->s->log("OPEN %s%s name=%s access=%u deny=%u type=%s mode=%u sattr=%#x size=%llu -> lookup %u",
-			  dirfh.kind == NFUSE_FH_ATTRDIR ? "[attribute directory] " : "",
+			  dirfh.kind == OPENMACFUSE_FH_ATTRDIR ? "[attribute directory] " : "",
 			  opentype == OPEN4_CREATE ? "CREATE" : "NOCREATE", name, access, deny,
 			  opentype == OPEN4_CREATE ? (createmode == UNCHECKED4 ? "UNCHECKED" :
 			  createmode == GUARDED4 ? "GUARDED" : "EXCLUSIVE") : "-", createmode,
 			  sa.mask, (unsigned long long)sa.size, rc);
 
-	if (opentype == OPEN4_CREATE && dirfh.kind == NFUSE_FH_ATTRDIR) {
+	if (opentype == OPEN4_CREATE && dirfh.kind == OPENMACFUSE_FH_ATTRDIR) {
 		/*
 		 * creating an attribute in a named attribute directory: create an empty value;
 		 * the client then WRITEs the value
@@ -1551,12 +1551,12 @@ static uint32_t op_open(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 				return sattr_rc;
 			r = c->s->be.ops->xattr_write(c->s->be.ctx, dirfh.ino, name, NULL, 0, 0);
 			if (r < 0)
-				return nfuse_errno_to_nfs4(r);
+				return openmacfuse_errno_to_nfs4(r);
 			rc = lookup_name(c, &dirfh, name, &nfh);
 			if (rc)
 				return rc;
 			created = 1;
-			if (createmode != EXCLUSIVE4 && (sa.mask & NFUSE_SA_SIZE))
+			if (createmode != EXCLUSIVE4 && (sa.mask & OPENMACFUSE_SA_SIZE))
 				bm_set(attrset, FATTR4_SIZE);
 		} else {
 			return rc;
@@ -1571,21 +1571,21 @@ static uint32_t op_open(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 			return NFS4ERR_ROFS;
 		if (createmode != EXCLUSIVE4 && sattr_rc)
 			return sattr_rc;
-		r = nfuse_adf_create(c->s, adx, 1);
+		r = openmacfuse_adf_create(c->s, adx, 1);
 		if (r)
-			return nfuse_errno_to_nfs4(r);
+			return openmacfuse_errno_to_nfs4(r);
 		set_node_fh(c, &nfh, adx, dirfh.ino);
-		nfh.kind = NFUSE_FH_ADFILE;
+		nfh.kind = OPENMACFUSE_FH_ADFILE;
 		created = 1;
 		if (createmode != EXCLUSIVE4)
 			sattr_bits(&sa, attrset);
-	} else if (opentype == OPEN4_CREATE && rc == NFS4_OK && nfh.kind == NFUSE_FH_ADFILE) {
+	} else if (opentype == OPEN4_CREATE && rc == NFS4_OK && nfh.kind == OPENMACFUSE_FH_ADFILE) {
 		if (createmode != UNCHECKED4)
 			return NFS4ERR_EXIST;
 		if (sattr_rc)
 			return sattr_rc;
 	} else if (opentype == OPEN4_CREATE) {
-		if (dirfh.kind != NFUSE_FH_NODE)
+		if (dirfh.kind != OPENMACFUSE_FH_NODE)
 			return is_pseudo(&dirfh) ? NFS4ERR_ROFS : NFS4ERR_NOTSUPP;
 		if (!c->s->be.ops->create)
 			return NFS4ERR_ROFS;
@@ -1610,19 +1610,19 @@ static uint32_t op_open(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 			}
 		} else if (rc == NFS4ERR_NOENT) {
 			uint32_t mode;
-			nfuse_ino_t ino;
+			openmacfuse_ino_t ino;
 
 			if (createmode != EXCLUSIVE4 && sattr_rc)
 				return sattr_rc;
-			mode = (sa.mask & NFUSE_SA_MODE) ? sa.mode : 0644;
+			mode = (sa.mask & OPENMACFUSE_SA_MODE) ? sa.mode : 0644;
 			r = c->s->be.ops->create(c->s->be.ctx, dirfh.ino, name, mode,
 						 O_RDWR, &ino, &befh);
 			if (r)
-				return nfuse_errno_to_nfs4(r);
+				return openmacfuse_errno_to_nfs4(r);
 			created = 1;
 			set_node_fh(c, &nfh, ino, dirfh.ino);
 			if (createmode == EXCLUSIVE4) {
-				struct nfuse_sattr vs;
+				struct openmacfuse_sattr vs;
 
 				verf_to_sattr(verf, &vs);
 				r = c->s->be.ops->setattr(c->s->be.ctx, ino, befh, &vs);
@@ -1631,13 +1631,13 @@ static uint32_t op_open(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 				bm_set(attrset, FATTR4_TIME_ACCESS);
 				bm_set(attrset, FATTR4_TIME_MODIFY);
 			} else {
-				struct nfuse_sattr rest = sa;
+				struct openmacfuse_sattr rest = sa;
 
 				/*
 				 * mode was already given at creation; a new file's size is 0
 				 * anyway
 				 */
-				rest.mask &= ~(NFUSE_SA_MODE | NFUSE_SA_SIZE);
+				rest.mask &= ~(OPENMACFUSE_SA_MODE | OPENMACFUSE_SA_SIZE);
 				sattr_bits(&sa, attrset);
 				if (rest.mask) {
 					r = c->s->be.ops->setattr(c->s->be.ctx, ino, befh, &rest);
@@ -1694,14 +1694,14 @@ static uint32_t op_open(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		 */
 		if (created && c->s->be.ops->release)
 			c->s->be.ops->release(c->s->be.ctx, nfh.ino, befh);
-		if (need_write && !op->bewrite && op->kind == NFUSE_FH_NODE &&
+		if (need_write && !op->bewrite && op->kind == OPENMACFUSE_FH_NODE &&
 		    c->s->be.ops->open) {
 			/* read upgraded to read-write: reopen the backend handle read-write */
 			uint64_t nb = 0;
 
 			r = c->s->be.ops->open(c->s->be.ctx, nfh.ino, O_RDWR, &nb);
 			if (r)
-				return nfuse_errno_to_nfs4(r);
+				return openmacfuse_errno_to_nfs4(r);
 			if (c->s->be.ops->release)
 				c->s->be.ops->release(c->s->be.ctx, nfh.ino, op->befh);
 			op->befh = nb;
@@ -1711,21 +1711,21 @@ static uint32_t op_open(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		op->share_deny |= deny;
 		op->sid.seqid++;
 	} else {
-		if (!created && nfh.kind == NFUSE_FH_NODE && c->s->be.ops->open) {
+		if (!created && nfh.kind == OPENMACFUSE_FH_NODE && c->s->be.ops->open) {
 			r = c->s->be.ops->open(c->s->be.ctx, nfh.ino,
 					       need_write ? O_RDWR : O_RDONLY, &befh);
 			if (r)
-				return nfuse_errno_to_nfs4(r);
+				return openmacfuse_errno_to_nfs4(r);
 		}
-		op = nfuse_open_new(c->s, ow, nfh.ino, befh, access, deny);
+		op = openmacfuse_open_new(c->s, ow, nfh.ino, befh, access, deny);
 		if (!op) {
-			if (nfh.kind == NFUSE_FH_NODE && c->s->be.ops->release)
+			if (nfh.kind == OPENMACFUSE_FH_NODE && c->s->be.ops->release)
 				c->s->be.ops->release(c->s->be.ctx, nfh.ino, befh);
 			return NFS4ERR_RESOURCE;
 		}
 		op->bewrite = need_write || created;
 		op->kind = nfh.kind;
-		op->attr_id = nfh.kind == NFUSE_FH_NAMEDATTR ? nfh.attr_id : 0;
+		op->attr_id = nfh.kind == OPENMACFUSE_FH_NAMEDATTR ? nfh.attr_id : 0;
 	}
 	/*
 	 * Opening a named attribute for write = whole-value replacement: when changing an
@@ -1740,37 +1740,37 @@ static uint32_t op_open(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	 * 12; macOS 27 behaves the same). The resource fork is the exception: it is written in
 	 * chunks by position, and APFS does not truncate it either (observed).
 	 */
-	if (nfh.kind == NFUSE_FH_NAMEDATTR && (access & OPEN4_SHARE_ACCESS_WRITE) && !created) {
+	if (nfh.kind == OPENMACFUSE_FH_NAMEDATTR && (access & OPEN4_SHARE_ACCESS_WRITE) && !created) {
 		const char *an = attr_name(c->s, nfh.attr_id);
 
 		if (an && strcmp(an, "com.apple.ResourceFork") != 0 &&
 		    c->s->be.ops->xattr_truncate) {
 			r = c->s->be.ops->xattr_truncate(c->s->be.ctx, nfh.ino, an, 0);
 			if (r && r != -ENOATTR)
-				return nfuse_errno_to_nfs4(r);
+				return openmacfuse_errno_to_nfs4(r);
 			c->s->xattr_trunc_on_write++;
 		}
 	}
 	/* UNCHECKED4 open of an existing file: only size (truncation) is honored */
 	if (!created && opentype == OPEN4_CREATE && createmode == UNCHECKED4 &&
-	    (sa.mask & NFUSE_SA_SIZE) && need_write) {
-		struct nfuse_sattr ts;
+	    (sa.mask & OPENMACFUSE_SA_SIZE) && need_write) {
+		struct openmacfuse_sattr ts;
 
 		memset(&ts, 0, sizeof(ts));
-		ts.mask = NFUSE_SA_SIZE;
+		ts.mask = OPENMACFUSE_SA_SIZE;
 		ts.size = sa.size;
-		if (nfh.kind == NFUSE_FH_NAMEDATTR) {
+		if (nfh.kind == OPENMACFUSE_FH_NAMEDATTR) {
 			const char *an = attr_name(c->s, nfh.attr_id);
 			r = an && c->s->be.ops->xattr_truncate ?
 			    c->s->be.ops->xattr_truncate(c->s->be.ctx, nfh.ino, an, sa.size) :
 			    -EROFS;
-		} else if (nfh.kind == NFUSE_FH_ADFILE) {
-			r = nfuse_adf_truncate(c->s, nfh.ino, sa.size);
+		} else if (nfh.kind == OPENMACFUSE_FH_ADFILE) {
+			r = openmacfuse_adf_truncate(c->s, nfh.ino, sa.size);
 		} else {
 			r = c->s->be.ops->setattr(c->s->be.ctx, nfh.ino, op->befh, &ts);
 		}
 		if (r)
-			return nfuse_errno_to_nfs4(r);
+			return openmacfuse_errno_to_nfs4(r);
 		bm_set(attrset, FATTR4_SIZE);
 	}
 	if (!ow->confirmed)
@@ -1788,8 +1788,8 @@ static uint32_t op_open(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 
 static uint32_t op_open_confirm(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
-	struct nfuse_stateid sid;
-	struct nfuse_open *op;
+	struct openmacfuse_stateid sid;
+	struct openmacfuse_open *op;
 	uint32_t seqid, rc;
 	int r;
 
@@ -1799,10 +1799,10 @@ static uint32_t op_open_confirm(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		return NFS4ERR_BADXDR;
 	if (!c->have_cur)
 		return NFS4ERR_NOFILEHANDLE;
-	rc = nfuse_open_find(c->s, &sid, &op);
+	rc = openmacfuse_open_find(c->s, &sid, &op);
 	if (rc)
 		return rc;
-	r = nfuse_seq_check(&op->owner->seq, seqid, OP_OPEN_CONFIRM);
+	r = openmacfuse_seq_check(&op->owner->seq, seqid, OP_OPEN_CONFIRM);
 	if (r == 1)
 		return seq_replay(c, &op->owner->seq, e);
 	if (r < 0) {
@@ -1810,7 +1810,7 @@ static uint32_t op_open_confirm(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		return NFS4ERR_BAD_SEQID;
 	}
 	seq_will_record(c, &op->owner->seq, seqid);
-	rc = nfuse_stateid_check_seq(&op->sid, &sid);
+	rc = openmacfuse_stateid_check_seq(&op->sid, &sid);
 	if (rc)
 		return rc;
 	if (op->ino != c->cur.ino)
@@ -1823,8 +1823,8 @@ static uint32_t op_open_confirm(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 
 static uint32_t op_open_downgrade(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
-	struct nfuse_stateid sid;
-	struct nfuse_open *op;
+	struct openmacfuse_stateid sid;
+	struct openmacfuse_open *op;
 	uint32_t seqid, access, deny, rc;
 	int r;
 
@@ -1836,10 +1836,10 @@ static uint32_t op_open_downgrade(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		return NFS4ERR_BADXDR;
 	if (!c->have_cur)
 		return NFS4ERR_NOFILEHANDLE;
-	rc = nfuse_open_find(c->s, &sid, &op);
+	rc = openmacfuse_open_find(c->s, &sid, &op);
 	if (rc)
 		return rc;
-	r = nfuse_seq_check(&op->owner->seq, seqid, OP_OPEN_DOWNGRADE);
+	r = openmacfuse_seq_check(&op->owner->seq, seqid, OP_OPEN_DOWNGRADE);
 	if (r == 1)
 		return seq_replay(c, &op->owner->seq, e);
 	if (r < 0) {
@@ -1847,7 +1847,7 @@ static uint32_t op_open_downgrade(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		return NFS4ERR_BAD_SEQID;
 	}
 	seq_will_record(c, &op->owner->seq, seqid);
-	rc = nfuse_stateid_check_seq(&op->sid, &sid);
+	rc = openmacfuse_stateid_check_seq(&op->sid, &sid);
 	if (rc)
 		return rc;
 	if (op->ino != c->cur.ino)
@@ -1865,8 +1865,8 @@ static uint32_t op_open_downgrade(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 
 static uint32_t op_close(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
-	struct nfuse_stateid sid, out;
-	struct nfuse_open *op;
+	struct openmacfuse_stateid sid, out;
+	struct openmacfuse_open *op;
 	uint32_t seqid, rc;
 	int r;
 
@@ -1876,13 +1876,13 @@ static uint32_t op_close(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		return NFS4ERR_BADXDR;
 	if (!c->have_cur)
 		return NFS4ERR_NOFILEHANDLE;
-	rc = nfuse_open_find(c->s, &sid, &op);
+	rc = openmacfuse_open_find(c->s, &sid, &op);
 	if (rc == NFS4ERR_BAD_STATEID) {
 		/*
 		 * the open state was already released by the "first pass" of this CLOSE:
 		 * recognize the retransmission from the owner's replay cache
 		 */
-		struct nfuse_owner *ow;
+		struct openmacfuse_owner *ow;
 
 		for (ow = c->s->owners; ow; ow = ow->next)
 			if (ow->seq.valid && ow->seq.op == OP_CLOSE &&
@@ -1892,7 +1892,7 @@ static uint32_t op_close(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	}
 	if (rc)
 		return rc;
-	r = nfuse_seq_check(&op->owner->seq, seqid, OP_CLOSE);
+	r = openmacfuse_seq_check(&op->owner->seq, seqid, OP_CLOSE);
 	if (r == 1)
 		return seq_replay(c, &op->owner->seq, e);
 	if (r < 0) {
@@ -1902,21 +1902,21 @@ static uint32_t op_close(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	seq_will_record(c, &op->owner->seq, seqid);
 	c->rec_has_other = 1;
 	memcpy(c->rec_other, sid.other, NFS4_OTHER_SIZE);
-	rc = nfuse_stateid_check_seq(&op->sid, &sid);
+	rc = openmacfuse_stateid_check_seq(&op->sid, &sid);
 	if (rc)
 		return rc;
-	if (op->kind == NFUSE_FH_NODE && c->s->be.ops->release)
+	if (op->kind == OPENMACFUSE_FH_NODE && c->s->be.ops->release)
 		c->s->be.ops->release(c->s->be.ctx, op->ino, op->befh);
 	out = op->sid;
 	out.seqid++;
-	nfuse_lock_detach_open(c->s, op);
+	openmacfuse_lock_detach_open(c->s, op);
 	{
-		int adf = op->kind == NFUSE_FH_ADFILE;
-		nfuse_ino_t ax = op->ino;
+		int adf = op->kind == OPENMACFUSE_FH_ADFILE;
+		openmacfuse_ino_t ax = op->ino;
 
-		nfuse_open_free(c->s, op);
+		openmacfuse_open_free(c->s, op);
 		if (adf && !adf_opens(c->s, ax))
-			nfuse_adf_apply(c->s, ax);	/* the last open is closed: write X's attributes back */
+			openmacfuse_adf_apply(c->s, ax);	/* the last open is closed: write X's attributes back */
 	}
 	put_stateid(e, &out);
 	return NFS4_OK;
@@ -1929,20 +1929,20 @@ static uint32_t op_close(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
  * special stateids (all zeros / all ones) go through a temporary open. When NFS4_OK is returned
  * *opp is the open state (NULL for a special stateid).
  */
-static uint32_t io_stateid(struct cctx *c, const struct nfuse_stateid *sid,
-			   struct nfuse_open **opp)
+static uint32_t io_stateid(struct cctx *c, const struct openmacfuse_stateid *sid,
+			   struct openmacfuse_open **opp)
 {
 	uint32_t rc;
 
 	*opp = NULL;
-	if (nfuse_stateid_is_special(sid))
+	if (openmacfuse_stateid_is_special(sid))
 		return NFS4_OK;
-	rc = nfuse_open_lookup(c->s, sid, opp);
+	rc = openmacfuse_open_lookup(c->s, sid, opp);
 	if (rc == NFS4ERR_BAD_STATEID) {
 		/* the client may also read and write with a lock stateid */
-		struct nfuse_lock *lk;
-		if (nfuse_lock_lookup(c->s, sid, &lk) == NFS4_OK &&
-		    nfuse_lock_attach(c->s, lk)) {
+		struct openmacfuse_lock *lk;
+		if (openmacfuse_lock_lookup(c->s, sid, &lk) == NFS4_OK &&
+		    openmacfuse_lock_attach(c->s, lk)) {
 			*opp = lk->open;
 			rc = NFS4_OK;
 		}
@@ -1983,7 +1983,7 @@ static uint32_t read_namedattr(struct cctx *c, uint64_t off, uint32_t count,
 		return NFS4ERR_RESOURCE;
 	got = count ? c->s->be.ops->xattr_read(c->s->be.ctx, c->cur.ino, nm, buf, count, off) : 0;
 	if (got < 0)
-		return nfuse_errno_to_nfs4(got);
+		return openmacfuse_errno_to_nfs4(got);
 	xdr_truncate(e, datapos + 4 + XDR_PAD((uint32_t)got));
 	xdr_patch_u32(e, datapos, (uint32_t)got);
 	if (XDR_PAD((uint32_t)got) > (uint32_t)got)
@@ -1995,9 +1995,9 @@ static uint32_t read_namedattr(struct cctx *c, uint64_t off, uint32_t count,
 
 static uint32_t op_read(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
-	struct nfuse_stateid sid;
-	struct nfuse_open *op = NULL;
-	struct nfuse_attr st;
+	struct openmacfuse_stateid sid;
+	struct openmacfuse_open *op = NULL;
+	struct openmacfuse_attr st;
 	uint64_t off, befh = 0;
 	uint32_t count, rc;
 	size_t eofpos, datapos;
@@ -2018,13 +2018,13 @@ static uint32_t op_read(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		return NFS4ERR_ISDIR;
 	if (!S_ISREG(st.mode))
 		return NFS4ERR_INVAL;
-	if (c->cur.kind == NFUSE_FH_NAMEDATTR) {
+	if (c->cur.kind == OPENMACFUSE_FH_NAMEDATTR) {
 		rc = io_stateid(c, &sid, &op);
 		if (rc)
 			return rc;
 		return read_namedattr(c, off, count, st.size, e);
 	}
-	if (c->cur.kind == NFUSE_FH_ADFILE) {
+	if (c->cur.kind == OPENMACFUSE_FH_ADFILE) {
 		rc = io_stateid(c, &sid, &op);
 		if (rc)
 			return rc;
@@ -2035,9 +2035,9 @@ static uint32_t op_read(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		buf = xdr_put_opaque_space(e, count);
 		if (!buf)
 			return NFS4ERR_RESOURCE;
-		got = nfuse_adf_read(c->s, c->cur.ino, buf, count, off);
+		got = openmacfuse_adf_read(c->s, c->cur.ino, buf, count, off);
 		if (got < 0)
-			return nfuse_errno_to_nfs4(got);
+			return openmacfuse_errno_to_nfs4(got);
 		xdr_truncate(e, datapos + 4 + XDR_PAD((uint32_t)got));
 		xdr_patch_u32(e, datapos, (uint32_t)got);
 		if (XDR_PAD((uint32_t)got) > (uint32_t)got)
@@ -2069,7 +2069,7 @@ static uint32_t op_read(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	}
 	got = c->s->be.ops->read(c->s->be.ctx, c->cur.ino, befh, buf, count, off);
 	if (got < 0) {
-		rc = nfuse_errno_to_nfs4(got);
+		rc = openmacfuse_errno_to_nfs4(got);
 		goto out;
 	}
 	/* finish up with the length actually read: fix the length and pad to alignment */
@@ -2103,9 +2103,9 @@ out:
  */
 static uint32_t op_write(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
-	struct nfuse_stateid sid;
-	struct nfuse_open *op = NULL;
-	struct nfuse_attr st;
+	struct openmacfuse_stateid sid;
+	struct openmacfuse_open *op = NULL;
+	struct openmacfuse_attr st;
 	uint64_t off, befh = 0;
 	uint32_t stable, len, rc, committed = UNSTABLE4;
 	const uint8_t *data;
@@ -2121,7 +2121,7 @@ static uint32_t op_write(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		return NFS4ERR_NOFILEHANDLE;
 	if (!be_writable(c) || !c->s->be.ops->write)
 		return NFS4ERR_ROFS;
-	if (c->cur.kind == NFUSE_FH_NAMEDATTR) {
+	if (c->cur.kind == OPENMACFUSE_FH_NAMEDATTR) {
 		/*
 		 * write [off, off+len) of a named attribute: no truncation (truncation goes
 		 * through SETATTR size / the size given at OPEN)
@@ -2141,14 +2141,14 @@ static uint32_t op_write(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 			return NFS4ERR_FBIG;
 		n = c->s->be.ops->xattr_write(c->s->be.ctx, c->cur.ino, an, data, len, off);
 		if (n < 0)
-			return nfuse_errno_to_nfs4(n);
+			return openmacfuse_errno_to_nfs4(n);
 		c->s->namedattr_ops++;
 		xdr_put_u32(e, (uint32_t)n);
 		xdr_put_u32(e, stable == UNSTABLE4 ? UNSTABLE4 : FILE_SYNC4);
 		xdr_put_fixed(e, c->s->writeverf, NFS4_VERIFIER_SIZE);
 		return NFS4_OK;
 	}
-	if (c->cur.kind == NFUSE_FH_ADFILE) {
+	if (c->cur.kind == OPENMACFUSE_FH_ADFILE) {
 		/*
 		 * virtual `._X`: write into the session; a stable write is written back to X's
 		 * attributes on the spot
@@ -2160,20 +2160,20 @@ static uint32_t op_write(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 			return rc;
 		if (op && !(op->share_access & OPEN4_SHARE_ACCESS_WRITE))
 			return NFS4ERR_OPENMODE;
-		n = nfuse_adf_write(c->s, c->cur.ino, data, len, off);
+		n = openmacfuse_adf_write(c->s, c->cur.ino, data, len, off);
 		if (n < 0)
-			return nfuse_errno_to_nfs4(n);
+			return openmacfuse_errno_to_nfs4(n);
 		if (stable != UNSTABLE4 && !adf_opens(c->s, c->cur.ino)) {
-			int r = nfuse_adf_apply(c->s, c->cur.ino);
+			int r = openmacfuse_adf_apply(c->s, c->cur.ino);
 			if (r)
-				return nfuse_errno_to_nfs4(r);
+				return openmacfuse_errno_to_nfs4(r);
 		}
 		xdr_put_u32(e, (uint32_t)n);
 		xdr_put_u32(e, stable == UNSTABLE4 ? UNSTABLE4 : FILE_SYNC4);
 		xdr_put_fixed(e, c->s->writeverf, NFS4_VERIFIER_SIZE);
 		return NFS4_OK;
 	}
-	if (c->cur.kind != NFUSE_FH_NODE)
+	if (c->cur.kind != OPENMACFUSE_FH_NODE)
 		return is_pseudo(&c->cur) ? NFS4ERR_ISDIR : NFS4ERR_INVAL;
 	rc = cur_attr(c, &c->cur, &st);
 	if (rc)
@@ -2196,12 +2196,12 @@ static uint32_t op_write(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		int r = c->s->be.ops->open ?
 			c->s->be.ops->open(c->s->be.ctx, c->cur.ino, O_RDWR, &befh) : 0;
 		if (r)
-			return nfuse_errno_to_nfs4(r);
+			return openmacfuse_errno_to_nfs4(r);
 		temp_open = 1;
 	}
 	n = len ? c->s->be.ops->write(c->s->be.ctx, c->cur.ino, befh, data, len, off) : 0;
 	if (n < 0) {
-		rc = nfuse_errno_to_nfs4(n);
+		rc = openmacfuse_errno_to_nfs4(n);
 		goto out;
 	}
 	if (stable != UNSTABLE4 && n > 0) {
@@ -2209,7 +2209,7 @@ static uint32_t op_write(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 			c->s->be.ops->fsync(c->s->be.ctx, c->cur.ino, befh,
 					    stable == DATA_SYNC4) : 0;
 		if (r) {
-			rc = nfuse_errno_to_nfs4(r);
+			rc = openmacfuse_errno_to_nfs4(r);
 			goto out;
 		}
 		committed = stable == DATA_SYNC4 ? DATA_SYNC4 : FILE_SYNC4;
@@ -2238,8 +2238,8 @@ out:
  */
 static uint32_t op_commit(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
-	struct nfuse_attr st;
-	struct nfuse_open *op, *best = NULL;
+	struct openmacfuse_attr st;
+	struct openmacfuse_open *op, *best = NULL;
 	uint32_t rc;
 	int r;
 
@@ -2251,23 +2251,23 @@ static uint32_t op_commit(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		return NFS4ERR_NOFILEHANDLE;
 	if (!be_writable(c))
 		return NFS4ERR_ROFS;
-	if (c->cur.kind == NFUSE_FH_ADFILE) {
-		r = adf_opens(c->s, c->cur.ino) ? 0 : nfuse_adf_apply(c->s, c->cur.ino);
+	if (c->cur.kind == OPENMACFUSE_FH_ADFILE) {
+		r = adf_opens(c->s, c->cur.ino) ? 0 : openmacfuse_adf_apply(c->s, c->cur.ino);
 		if (r)
-			return nfuse_errno_to_nfs4(r);
+			return openmacfuse_errno_to_nfs4(r);
 		xdr_put_fixed(e, c->s->writeverf, NFS4_VERIFIER_SIZE);
 		return NFS4_OK;
 	}
-	if (c->cur.kind == NFUSE_FH_NAMEDATTR) {
+	if (c->cur.kind == OPENMACFUSE_FH_NAMEDATTR) {
 		/* named attribute: flushing follows the owning file */
 		r = c->s->be.ops->fsync ?
 		    c->s->be.ops->fsync(c->s->be.ctx, c->cur.ino, 0, 0) : 0;
 		if (r)
-			return nfuse_errno_to_nfs4(r);
+			return openmacfuse_errno_to_nfs4(r);
 		xdr_put_fixed(e, c->s->writeverf, NFS4_VERIFIER_SIZE);
 		return NFS4_OK;
 	}
-	if (c->cur.kind != NFUSE_FH_NODE)
+	if (c->cur.kind != OPENMACFUSE_FH_NODE)
 		return is_pseudo(&c->cur) ? NFS4ERR_ISDIR : NFS4ERR_INVAL;
 	rc = cur_attr(c, &c->cur, &st);
 	if (rc)
@@ -2277,13 +2277,13 @@ static uint32_t op_commit(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	if (!S_ISREG(st.mode))
 		return NFS4ERR_INVAL;
 	for (op = c->s->opens; op; op = op->next)
-		if (op->kind == NFUSE_FH_NODE && op->ino == c->cur.ino &&
+		if (op->kind == OPENMACFUSE_FH_NODE && op->ino == c->cur.ino &&
 		    (!best || (op->bewrite && !best->bewrite)))
 			best = op;
 	r = c->s->be.ops->fsync ?
 	    c->s->be.ops->fsync(c->s->be.ctx, c->cur.ino, best ? best->befh : 0, 0) : 0;
 	if (r)
-		return r == -ENXIO ? NFS4ERR_IO : nfuse_errno_to_nfs4(r);
+		return r == -ENXIO ? NFS4ERR_IO : openmacfuse_errno_to_nfs4(r);
 	c->s->commits++;
 	xdr_put_fixed(e, c->s->writeverf, NFS4_VERIFIER_SIZE);
 	return NFS4_OK;
@@ -2309,16 +2309,16 @@ static uint32_t lock_range(uint64_t off, uint64_t len, uint64_t *end)
 static uint32_t lt_type(uint32_t locktype)
 {
 	/* READ_LT=1 / READW_LT=3 are read locks, WRITE_LT=2 / WRITEW_LT=4 are write locks */
-	return (locktype == 2 || locktype == 4) ? NFUSE_LT_WRITE : NFUSE_LT_READ;
+	return (locktype == 2 || locktype == 4) ? OPENMACFUSE_LT_WRITE : OPENMACFUSE_LT_READ;
 }
 
 /* LOCK4denied: the conflicting range and its holder */
-static void put_denied(struct cctx *c, xdr_enc_t *e, const struct nfuse_lockrange *r,
-		       const struct nfuse_lockowner *lo)
+static void put_denied(struct cctx *c, xdr_enc_t *e, const struct openmacfuse_lockrange *r,
+		       const struct openmacfuse_lockowner *lo)
 {
 	xdr_put_u64(e, r->off);
 	xdr_put_u64(e, r->end == UINT64_MAX ? UINT64_MAX : r->end - r->off);
-	xdr_put_u32(e, r->type == NFUSE_LT_WRITE ? 2 : 1);
+	xdr_put_u32(e, r->type == OPENMACFUSE_LT_WRITE ? 2 : 1);
 	xdr_put_u64(e, lo->clientid);
 	xdr_put_opaque(e, lo->owner, lo->ownerlen);
 	c->keep_err_body = 1;
@@ -2329,13 +2329,13 @@ static uint32_t op_lock(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	uint32_t locktype, rc, ownerlen = 0, open_seqid = 0, lock_seqid;
 	int reclaim, newowner, r;
 	uint64_t off, len, end, clientid = 0;
-	struct nfuse_stateid osid, lsid;
+	struct openmacfuse_stateid osid, lsid;
 	const uint8_t *owner = NULL;
-	struct nfuse_lock *lk = NULL;
-	struct nfuse_lockowner *lo, *holder;
-	struct nfuse_lockrange *cf;
-	struct nfuse_open *op;
-	nfuse_ino_t lkey;
+	struct openmacfuse_lock *lk = NULL;
+	struct openmacfuse_lockowner *lo, *holder;
+	struct openmacfuse_lockrange *cf;
+	struct openmacfuse_open *op;
+	openmacfuse_ino_t lkey;
 
 	locktype = xdr_get_u32(d);
 	reclaim = xdr_get_bool(d);
@@ -2368,13 +2368,13 @@ static uint32_t op_lock(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		 * new lock-owner: sequencing follows the open-owner (open_seqid), with lock_seqid
 		 * as the starting point
 		 */
-		rc = nfuse_check_clientid(c->s, clientid);
+		rc = openmacfuse_check_clientid(c->s, clientid);
 		if (rc)
 			return rc;
-		rc = nfuse_open_find(c->s, &osid, &op);
+		rc = openmacfuse_open_find(c->s, &osid, &op);
 		if (rc)
 			return rc;
-		r = nfuse_seq_check(&op->owner->seq, open_seqid, OP_LOCK);
+		r = openmacfuse_seq_check(&op->owner->seq, open_seqid, OP_LOCK);
 		if (r == 1)
 			return seq_replay(c, &op->owner->seq, e);
 		if (r < 0) {
@@ -2382,20 +2382,20 @@ static uint32_t op_lock(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 			return NFS4ERR_BAD_SEQID;
 		}
 		seq_will_record(c, &op->owner->seq, open_seqid);
-		lo = nfuse_lockowner_get(c->s, clientid, owner, ownerlen, 1);
+		lo = openmacfuse_lockowner_get(c->s, clientid, owner, ownerlen, 1);
 		if (!lo)
 			return NFS4ERR_RESOURCE;
 		seq_will_record(c, &lo->seq, lock_seqid);
-		rc = nfuse_stateid_check_seq(&op->sid, &osid);
+		rc = openmacfuse_stateid_check_seq(&op->sid, &osid);
 		if (rc)
 			return rc;
 	} else {
-		rc = nfuse_lock_find(c->s, &lsid, &lk);
+		rc = openmacfuse_lock_find(c->s, &lsid, &lk);
 		if (rc)
 			return rc;
 		lo = lk->lo;
 		lo->last_used = time(NULL);
-		r = nfuse_seq_check(&lo->seq, lock_seqid, OP_LOCK);
+		r = openmacfuse_seq_check(&lo->seq, lock_seqid, OP_LOCK);
 		if (r == 1)
 			return seq_replay(c, &lo->seq, e);
 		if (r < 0) {
@@ -2403,37 +2403,37 @@ static uint32_t op_lock(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 			return NFS4ERR_BAD_SEQID;
 		}
 		seq_will_record(c, &lo->seq, lock_seqid);
-		rc = nfuse_stateid_check_seq(&lk->sid, &lsid);
+		rc = openmacfuse_stateid_check_seq(&lk->sid, &lsid);
 		if (rc)
 			return rc;
 		/* the original open state may have been closed: attach to the current one */
-		op = nfuse_lock_attach(c->s, lk);
+		op = openmacfuse_lock_attach(c->s, lk);
 		if (!op)
 			return NFS4ERR_BAD_STATEID;
 	}
-	if (c->cur.kind != NFUSE_FH_NODE && c->cur.kind != NFUSE_FH_NAMEDATTR &&
-	    c->cur.kind != NFUSE_FH_ADFILE)
+	if (c->cur.kind != OPENMACFUSE_FH_NODE && c->cur.kind != OPENMACFUSE_FH_NAMEDATTR &&
+	    c->cur.kind != OPENMACFUSE_FH_ADFILE)
 		return NFS4ERR_INVAL;
 	rc = lock_range(off, len, &end);
 	if (rc)
 		return rc;
-	lkey = nfuse_lock_key(c->cur.kind, c->cur.ino, c->cur.attr_id);
+	lkey = openmacfuse_lock_key(c->cur.kind, c->cur.ino, c->cur.attr_id);
 	if (newowner) {
 		if (!open_matches(op, &c->cur))
 			return NFS4ERR_BAD_STATEID;
-		lk = nfuse_lock_get(c->s, lo, op, lkey);
+		lk = openmacfuse_lock_get(c->s, lo, op, lkey);
 		if (!lk)
 			return NFS4ERR_RESOURCE;
 	} else if (lk->ino != lkey) {
 		return NFS4ERR_BAD_STATEID;
 	}
-	cf = nfuse_lock_conflict(c->s, lkey, lo, off, end, lt_type(locktype),
+	cf = openmacfuse_lock_conflict(c->s, lkey, lo, off, end, lt_type(locktype),
 				&holder);
 	if (cf) {
 		put_denied(c, e, cf, holder);
 		return NFS4ERR_DENIED;
 	}
-	if (nfuse_lock_add(lk, off, end, lt_type(locktype)))
+	if (openmacfuse_lock_add(lk, off, end, lt_type(locktype)))
 		return NFS4ERR_RESOURCE;
 	lk->sid.seqid++;
 	put_stateid(e, &lk->sid);
@@ -2445,8 +2445,8 @@ static uint32_t op_lockt(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	uint32_t locktype, ownerlen, rc;
 	uint64_t off, len, end, clientid;
 	const uint8_t *owner;
-	struct nfuse_lockowner *lo, *holder;
-	struct nfuse_lockrange *cf;
+	struct openmacfuse_lockowner *lo, *holder;
+	struct openmacfuse_lockrange *cf;
 
 	locktype = xdr_get_u32(d);
 	off = xdr_get_u64(d);
@@ -2457,14 +2457,14 @@ static uint32_t op_lockt(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		return NFS4ERR_BADXDR;
 	if (!c->have_cur)
 		return NFS4ERR_NOFILEHANDLE;
-	if (c->cur.kind != NFUSE_FH_NODE && c->cur.kind != NFUSE_FH_NAMEDATTR &&
-	    c->cur.kind != NFUSE_FH_ADFILE)
+	if (c->cur.kind != OPENMACFUSE_FH_NODE && c->cur.kind != OPENMACFUSE_FH_NAMEDATTR &&
+	    c->cur.kind != OPENMACFUSE_FH_ADFILE)
 		return NFS4ERR_INVAL;
 	rc = lock_range(off, len, &end);
 	if (rc)
 		return rc;
-	lo = nfuse_lockowner_get(c->s, clientid, owner, ownerlen, 0);
-	cf = nfuse_lock_conflict(c->s, nfuse_lock_key(c->cur.kind, c->cur.ino, c->cur.attr_id),
+	lo = openmacfuse_lockowner_get(c->s, clientid, owner, ownerlen, 0);
+	cf = openmacfuse_lock_conflict(c->s, openmacfuse_lock_key(c->cur.kind, c->cur.ino, c->cur.attr_id),
 				lo, off, end, lt_type(locktype), &holder);
 	if (cf) {
 		put_denied(c, e, cf, holder);
@@ -2475,8 +2475,8 @@ static uint32_t op_lockt(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 
 static uint32_t op_locku(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
-	struct nfuse_stateid sid;
-	struct nfuse_lock *lk;
+	struct openmacfuse_stateid sid;
+	struct openmacfuse_lock *lk;
 	uint64_t off, len, end;
 	uint32_t rc, seqid;
 	int r;
@@ -2490,10 +2490,10 @@ static uint32_t op_locku(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		return NFS4ERR_BADXDR;
 	if (!c->have_cur)
 		return NFS4ERR_NOFILEHANDLE;
-	rc = nfuse_lock_find(c->s, &sid, &lk);
+	rc = openmacfuse_lock_find(c->s, &sid, &lk);
 	if (rc)
 		return rc;
-	r = nfuse_seq_check(&lk->lo->seq, seqid, OP_LOCKU);
+	r = openmacfuse_seq_check(&lk->lo->seq, seqid, OP_LOCKU);
 	if (r == 1)
 		return seq_replay(c, &lk->lo->seq, e);
 	if (r < 0) {
@@ -2501,15 +2501,15 @@ static uint32_t op_locku(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		return NFS4ERR_BAD_SEQID;
 	}
 	seq_will_record(c, &lk->lo->seq, seqid);
-	rc = nfuse_stateid_check_seq(&lk->sid, &sid);
+	rc = openmacfuse_stateid_check_seq(&lk->sid, &sid);
 	if (rc)
 		return rc;
 	rc = lock_range(off, len, &end);
 	if (rc)
 		return rc;
-	if (lk->ino != nfuse_lock_key(c->cur.kind, c->cur.ino, c->cur.attr_id))
+	if (lk->ino != openmacfuse_lock_key(c->cur.kind, c->cur.ino, c->cur.attr_id))
 		return NFS4ERR_BAD_STATEID;
-	if (nfuse_lock_remove(lk, off, end))
+	if (openmacfuse_lock_remove(lk, off, end))
 		return NFS4ERR_RESOURCE;
 	lk->sid.seqid++;
 	put_stateid(e, &lk->sid);
@@ -2527,7 +2527,7 @@ static uint32_t op_release_lockowner(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	owner = xdr_get_opaque_ref(d, NFS4_OPAQUE_LIMIT, &n);
 	if (d->err)
 		return NFS4ERR_BADXDR;
-	return nfuse_lockowner_release(c->s, clientid, owner, n);
+	return openmacfuse_lockowner_release(c->s, clientid, owner, n);
 }
 
 /* ---------- Attribute changes / create, remove, rename ---------- */
@@ -2538,10 +2538,10 @@ static uint32_t op_release_lockowner(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
  */
 static uint32_t op_setattr(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
-	struct nfuse_stateid sid;
-	struct nfuse_sattr sa;
-	struct nfuse_attr st;
-	struct nfuse_open *op = NULL;
+	struct openmacfuse_stateid sid;
+	struct openmacfuse_sattr sa;
+	struct openmacfuse_attr st;
+	struct openmacfuse_open *op = NULL;
 	uint32_t set[NFS4_BITMAP_WORDS], empty[NFS4_BITMAP_WORDS] = { 0 };
 	uint32_t rc;
 	int r;
@@ -2561,7 +2561,7 @@ static uint32_t op_setattr(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	}
 	if (rc)
 		goto fail;
-	if (c->cur.kind == NFUSE_FH_NAMEDATTR) {
+	if (c->cur.kind == OPENMACFUSE_FH_NAMEDATTR) {
 		/*
 		 * Named attribute: only the size is meaningful (truncation); times / permissions
 		 * and the like have nowhere to be stored and are reported as set (the client sets
@@ -2574,7 +2574,7 @@ static uint32_t op_setattr(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 			rc = NFS4ERR_STALE;
 			goto fail;
 		}
-		if (sa.mask & NFUSE_SA_SIZE) {
+		if (sa.mask & OPENMACFUSE_SA_SIZE) {
 			rc = io_stateid(c, &sid, &op);
 			if (rc)
 				goto fail;
@@ -2582,7 +2582,7 @@ static uint32_t op_setattr(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 			    c->s->be.ops->xattr_truncate(c->s->be.ctx, c->cur.ino, an, sa.size) :
 			    -EROFS;
 			if (r) {
-				rc = nfuse_errno_to_nfs4(r);
+				rc = openmacfuse_errno_to_nfs4(r);
 				goto fail;
 			}
 		}
@@ -2590,33 +2590,33 @@ static uint32_t op_setattr(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		xdr_put_bitmap(e, set, NFS4_BITMAP_WORDS);
 		return NFS4_OK;
 	}
-	if (c->cur.kind == NFUSE_FH_ATTRDIR) {
+	if (c->cur.kind == OPENMACFUSE_FH_ATTRDIR) {
 		xdr_put_bitmap(e, set, NFS4_BITMAP_WORDS);
 		return NFS4_OK;		/* the attribute directory itself has nothing that can be changed */
 	}
-	if (c->cur.kind == NFUSE_FH_ADFILE) {
+	if (c->cur.kind == OPENMACFUSE_FH_ADFILE) {
 		/*
 		 * virtual `._X`: only the size is meaningful; times / permissions have nowhere to
 		 * be stored and are reported as set
 		 */
-		if (sa.mask & NFUSE_SA_SIZE) {
-			r = nfuse_adf_truncate(c->s, c->cur.ino, sa.size);
+		if (sa.mask & OPENMACFUSE_SA_SIZE) {
+			r = openmacfuse_adf_truncate(c->s, c->cur.ino, sa.size);
 			if (r) {
-				rc = nfuse_errno_to_nfs4(r);
+				rc = openmacfuse_errno_to_nfs4(r);
 				goto fail;
 			}
 		}
 		xdr_put_bitmap(e, set, NFS4_BITMAP_WORDS);
 		return NFS4_OK;
 	}
-	if (c->cur.kind != NFUSE_FH_NODE) {
+	if (c->cur.kind != OPENMACFUSE_FH_NODE) {
 		rc = is_pseudo(&c->cur) ? NFS4ERR_ROFS : NFS4ERR_INVAL;
 		goto fail;
 	}
 	rc = cur_attr(c, &c->cur, &st);
 	if (rc)
 		goto fail;
-	if (sa.mask & NFUSE_SA_SIZE) {
+	if (sa.mask & OPENMACFUSE_SA_SIZE) {
 		if (S_ISDIR(st.mode)) {
 			rc = NFS4ERR_ISDIR;
 			goto fail;
@@ -2662,16 +2662,16 @@ fail:
  * Set the remaining attributes after creating an object (mode was already given at creation; a
  * failure is only logged and removed from attrset)
  */
-static void apply_rest(struct cctx *c, nfuse_ino_t ino, const struct nfuse_sattr *sa,
+static void apply_rest(struct cctx *c, openmacfuse_ino_t ino, const struct openmacfuse_sattr *sa,
 		       uint32_t attrset[NFS4_BITMAP_WORDS], int islnk)
 {
-	struct nfuse_sattr rest = *sa;
+	struct openmacfuse_sattr rest = *sa;
 	int r, k;
 
 	sattr_bits(sa, attrset);
-	rest.mask &= ~(NFUSE_SA_MODE | NFUSE_SA_SIZE);
+	rest.mask &= ~(OPENMACFUSE_SA_MODE | OPENMACFUSE_SA_SIZE);
 	if (islnk)
-		rest.mask &= NFUSE_SA_UID | NFUSE_SA_GID;
+		rest.mask &= OPENMACFUSE_SA_UID | OPENMACFUSE_SA_GID;
 	if (!rest.mask)
 		return;
 	r = c->s->be.ops->setattr(c->s->be.ctx, ino, 0, &rest);
@@ -2693,11 +2693,11 @@ static uint32_t op_create(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	uint32_t attrset[NFS4_BITMAP_WORDS] = { 0 }, dummy[NFS4_BITMAP_WORDS], rc;
 	const uint8_t *link = NULL;
 	char name[256], target[4097];
-	struct nfuse_sattr sa;
-	struct nfuse_attr dst;
-	struct nfuse_fh dirfh;
+	struct openmacfuse_sattr sa;
+	struct openmacfuse_attr dst;
+	struct openmacfuse_fh dirfh;
 	uint64_t before, after;
-	nfuse_ino_t ino = 0;
+	openmacfuse_ino_t ino = 0;
 	uint32_t mode;
 	int r;
 
@@ -2734,13 +2734,13 @@ static uint32_t op_create(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	rc = need_dir(c, &dst);
 	if (rc)
 		return rc;
-	if (c->cur.kind != NFUSE_FH_NODE)
+	if (c->cur.kind != OPENMACFUSE_FH_NODE)
 		return is_pseudo(&c->cur) ? NFS4ERR_ROFS : NFS4ERR_NOTSUPP;
 	if (sattr_rc)
 		return sattr_rc;
 	dirfh = c->cur;
 	before = dst.change;
-	mode = (sa.mask & NFUSE_SA_MODE) ? sa.mode : (type == NF4DIR ? 0755 : 0644);
+	mode = (sa.mask & OPENMACFUSE_SA_MODE) ? sa.mode : (type == NF4DIR ? 0755 : 0644);
 	switch (type) {
 	case NF4DIR:
 		r = c->s->be.ops->mkdir ?
@@ -2767,7 +2767,7 @@ static uint32_t op_create(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	}
 	}
 	if (r)
-		return r == -ENOTSUP ? NFS4ERR_BADTYPE : nfuse_errno_to_nfs4(r);
+		return r == -ENOTSUP ? NFS4ERR_BADTYPE : openmacfuse_errno_to_nfs4(r);
 	apply_rest(c, ino, &sa, attrset, type == NF4LNK);
 	if (type == NF4LNK) {
 		int k;
@@ -2787,7 +2787,7 @@ static uint32_t op_create(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 static uint32_t op_remove(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
 	char name[256];
-	struct nfuse_attr dst;
+	struct openmacfuse_attr dst;
 	uint64_t before, after;
 	uint32_t rc = get_component(d, name, sizeof(name));
 	int r;
@@ -2803,34 +2803,34 @@ static uint32_t op_remove(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	rc = need_dir(c, &dst);
 	if (rc)
 		return rc;
-	if (c->cur.kind == NFUSE_FH_ATTRDIR) {
+	if (c->cur.kind == OPENMACFUSE_FH_ATTRDIR) {
 		/* remove a named attribute */
 		if (!xattr_writable(c->s) || !c->s->be.ops->removexattr)
 			return NFS4ERR_ROFS;
 		before = dst.change;
 		r = c->s->be.ops->removexattr(c->s->be.ctx, c->cur.ino, name);
 		if (r)
-			return nfuse_errno_to_nfs4(r);
+			return openmacfuse_errno_to_nfs4(r);
 		c->s->namedattr_ops++;
 		after = dir_change(c, &c->cur);
 		put_change_info(e, before, after);
 		return NFS4_OK;
 	}
-	if (c->cur.kind != NFUSE_FH_NODE)
+	if (c->cur.kind != OPENMACFUSE_FH_NODE)
 		return is_pseudo(&c->cur) ? NFS4ERR_ROFS : NFS4ERR_NOTSUPP;
 	before = dst.change;
 	{
-		nfuse_ino_t x;
+		openmacfuse_ino_t x;
 		int ex;
 
-		if (c->s->adfile && nfuse_adf_alias(c->s, c->cur.ino, name, &x)) {
+		if (c->s->adfile && openmacfuse_adf_alias(c->s, c->cur.ino, name, &x)) {
 			/*
 			 * removing the rename alias `._A`: those are B's attributes and must not
 			 * be removed; just drop the alias
 			 */
 			if (c->s->verbose && c->s->log)
 				c->s->log("REMOVE alias %s (attributes of inode %llu left untouched)", name, (unsigned long long)x);
-			nfuse_adf_alias_drop(c->s, c->cur.ino, name);
+			openmacfuse_adf_alias_drop(c->s, c->cur.ino, name);
 			c->s->adf_alias_removes++;
 			put_change_info(e, before, before + 1);
 			return NFS4_OK;
@@ -2841,9 +2841,9 @@ static uint32_t op_remove(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 			 * (an old on-disk `._X` is migrated and removed along with them by the
 			 * backend)
 			 */
-			r = nfuse_adf_remove(c->s, x);
+			r = openmacfuse_adf_remove(c->s, x);
 			if (r)
-				return nfuse_errno_to_nfs4(r);
+				return openmacfuse_errno_to_nfs4(r);
 			after = dir_change(c, &c->cur);
 			put_change_info(e, before, after + 1);
 			return NFS4_OK;
@@ -2854,14 +2854,14 @@ static uint32_t op_remove(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 		 * an ordinary file X is being removed while its virtual `._X` is being written:
 		 * discard the session (the attributes go away together with X)
 		 */
-		nfuse_ino_t gone;
+		openmacfuse_ino_t gone;
 
 		if (c->s->be.ops->lookup(c->s->be.ctx, c->cur.ino, name, &gone) == 0)
-			nfuse_adf_forget(c->s, gone);
+			openmacfuse_adf_forget(c->s, gone);
 	}
 	r = c->s->be.ops->remove(c->s->be.ctx, c->cur.ino, name);
 	if (r)
-		return nfuse_errno_to_nfs4(r);
+		return openmacfuse_errno_to_nfs4(r);
 	after = dir_change(c, &c->cur);
 	put_change_info(e, before, after);
 	return NFS4_OK;
@@ -2871,7 +2871,7 @@ static uint32_t op_remove(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 static uint32_t op_rename(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
 	char oldname[256], newname[256];
-	struct nfuse_attr sst, tst;
+	struct openmacfuse_attr sst, tst;
 	uint64_t sb, sa, tb, ta;
 	uint32_t rc1 = get_component(d, oldname, sizeof(oldname));
 	uint32_t rc2 = get_component(d, newname, sizeof(newname));
@@ -2894,12 +2894,12 @@ static uint32_t op_rename(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	rc = need_dir_fh(c, &c->cur, &tst);
 	if (rc)
 		return rc;
-	if (c->saved.kind != NFUSE_FH_NODE || c->cur.kind != NFUSE_FH_NODE)
+	if (c->saved.kind != OPENMACFUSE_FH_NODE || c->cur.kind != OPENMACFUSE_FH_NODE)
 		return NFS4ERR_XDEV;
 	sb = sst.change;
 	tb = tst.change;
 	{
-		nfuse_ino_t xa, xb;
+		openmacfuse_ino_t xa, xb;
 		int exa, exb;
 
 		if (adf_name(c, &c->saved, oldname, &xa, &exa) && exa) {
@@ -2908,8 +2908,8 @@ static uint32_t op_rename(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 			 * the attributes move from A to B; any other name gets XDEV (mv falls
 			 * back to copy + delete)
 			 */
-			nfuse_ino_t ya;
-			int alias = nfuse_adf_alias(c->s, c->saved.ino, oldname, &ya);
+			openmacfuse_ino_t ya;
+			int alias = openmacfuse_adf_alias(c->s, c->saved.ino, oldname, &ya);
 
 			if (!adf_name(c, &c->cur, newname, &xb, &exb))
 				return NFS4ERR_XDEV;
@@ -2923,16 +2923,16 @@ static uint32_t op_rename(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 				if (c->s->verbose && c->s->log)
 					c->s->log("RENAME alias %s -> %s (inode %llu -> %llu)", oldname, newname,
 						  (unsigned long long)xa, (unsigned long long)xb);
-				nfuse_adf_alias_drop(c->s, c->saved.ino, oldname);
+				openmacfuse_adf_alias_drop(c->s, c->saved.ino, oldname);
 				if (xa != xb) {
-					r = nfuse_adf_copy(c->s, xa, xb);
+					r = openmacfuse_adf_copy(c->s, xa, xb);
 					if (r)
-						return nfuse_errno_to_nfs4(r);
+						return openmacfuse_errno_to_nfs4(r);
 				}
 			} else if (xa != xb) {
-				r = nfuse_adf_move(c->s, xa, xb);
+				r = openmacfuse_adf_move(c->s, xa, xb);
 				if (r)
-					return nfuse_errno_to_nfs4(r);
+					return openmacfuse_errno_to_nfs4(r);
 			}
 			put_change_info(e, sb, sb + 1);
 			put_change_info(e, tb, tb + 1);
@@ -2942,16 +2942,16 @@ static uint32_t op_rename(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	r = c->s->be.ops->rename(c->s->be.ctx, c->saved.ino, oldname, c->cur.ino,
 				 newname);
 	if (r)
-		return nfuse_errno_to_nfs4(r);
-	if (c->s->adfile && !nfuse_adf_target(oldname)) {
+		return openmacfuse_errno_to_nfs4(r);
+	if (c->s->adfile && !openmacfuse_adf_target(oldname)) {
 		/*
 		 * record the rename alias: the macOS 27 client will next write `._<old name>`
 		 * under the old name (see adfile.h)
 		 */
-		nfuse_ino_t y;
+		openmacfuse_ino_t y;
 
 		if (c->s->be.ops->lookup(c->s->be.ctx, c->cur.ino, newname, &y) == 0)
-			nfuse_adf_renamed(c->s, c->saved.ino, oldname, c->cur.ino, newname, y);
+			openmacfuse_adf_renamed(c->s, c->saved.ino, oldname, c->cur.ino, newname, y);
 	}
 	sa = dir_change(c, &c->saved);
 	ta = c->saved.ino == c->cur.ino ? sa : dir_change(c, &c->cur);
@@ -2967,7 +2967,7 @@ static uint32_t op_rename(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 static uint32_t op_link(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 {
 	char name[256];
-	struct nfuse_attr dst, st;
+	struct openmacfuse_attr dst, st;
 	uint64_t before, after;
 	uint32_t rc = get_component(d, name, sizeof(name));
 	int r;
@@ -2983,7 +2983,7 @@ static uint32_t op_link(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	rc = need_dir(c, &dst);
 	if (rc)
 		return rc;
-	if (c->cur.kind != NFUSE_FH_NODE || c->saved.kind != NFUSE_FH_NODE)
+	if (c->cur.kind != OPENMACFUSE_FH_NODE || c->saved.kind != OPENMACFUSE_FH_NODE)
 		return NFS4ERR_XDEV;
 	rc = cur_attr(c, &c->saved, &st);
 	if (rc)
@@ -2993,7 +2993,7 @@ static uint32_t op_link(struct cctx *c, xdr_dec_t *d, xdr_enc_t *e)
 	before = dst.change;
 	r = c->s->be.ops->link(c->s->be.ctx, c->saved.ino, c->cur.ino, name);
 	if (r)
-		return nfuse_errno_to_nfs4(r);
+		return openmacfuse_errno_to_nfs4(r);
 	after = dir_change(c, &c->cur);
 	put_change_info(e, before, after);
 	return NFS4_OK;
@@ -3009,7 +3009,7 @@ static uint32_t verify_common(struct cctx *c, xdr_dec_t *d, int want_same)
 {
 	uint32_t bm[NFS4_BITMAP_WORDS], sup[NFS4_BITMAP_WORDS], alen, rc, i;
 	const uint8_t *ap;
-	struct nfuse_attr st;
+	struct openmacfuse_attr st;
 	xdr_enc_t te;
 	int same;
 
@@ -3019,7 +3019,7 @@ static uint32_t verify_common(struct cctx *c, xdr_dec_t *d, int want_same)
 		return NFS4ERR_BADXDR;
 	if (!c->have_cur)
 		return NFS4ERR_NOFILEHANDLE;
-	nfuse_attr_supported(sup);
+	openmacfuse_attr_supported(sup);
 	for (i = 0; i < NFS4_BITMAP_WORDS; i++)
 		if (bm[i] & ~sup[i])
 			return NFS4ERR_ATTRNOTSUPP;
@@ -3031,7 +3031,7 @@ static uint32_t verify_common(struct cctx *c, xdr_dec_t *d, int want_same)
 		return rc;
 	if (xdr_enc_init(&te, 1024, 65536))
 		return NFS4ERR_RESOURCE;
-	nfuse_attr_encode(c->s, &te, bm, &c->cur, &st, NFS4_OK);
+	openmacfuse_attr_encode(c->s, &te, bm, &c->cur, &st, NFS4_OK);
 	if (te.err) {
 		xdr_enc_free(&te);
 		return NFS4ERR_RESOURCE;
@@ -3138,13 +3138,13 @@ static int op_ok_when_lost(uint32_t op)
 }
 
 /*
- * Test hook (NFUSE_TEST_HANG): this op "hangs" -- it sleeps holding the global lock, and never
+ * Test hook (OPENMACFUSE_TEST_HANG): this op "hangs" -- it sleeps holding the global lock, and never
  * returns when test_hang_ms is 0 (simulates an unresponsive backend / device, to verify the
  * watchdog). Fires only once.
  */
-static void test_hang(struct nfuse_server *s, uint32_t opcode)
+static void test_hang(struct openmacfuse_server *s, uint32_t opcode)
 {
-	uint64_t t0 = nfuse_uptime_ns();
+	uint64_t t0 = openmacfuse_uptime_ns();
 
 	s->test_hang_op = 0;
 	if (s->log)
@@ -3155,19 +3155,19 @@ static void test_hang(struct nfuse_server *s, uint32_t opcode)
 		usleep(100 * 1000);
 		if (s->test_hang_progress)
 			s->test_progress++;
-		if (s->test_hang_ms && nfuse_uptime_ns() - t0 >= (uint64_t)s->test_hang_ms * 1000000ULL)
+		if (s->test_hang_ms && openmacfuse_uptime_ns() - t0 >= (uint64_t)s->test_hang_ms * 1000000ULL)
 			break;
 	}
 	if (s->log)
 		s->log("test hook: %s returned after hanging for %.1f s", nfs4_op_name(opcode),
-		       (nfuse_uptime_ns() - t0) / 1e9);
+		       (openmacfuse_uptime_ns() - t0) / 1e9);
 }
 
-uint32_t nfs4_compound_gate(struct nfuse_server *s, xdr_dec_t *d, int *proved, uint32_t *first_op)
+uint32_t nfs4_compound_gate(struct openmacfuse_server *s, xdr_dec_t *d, int *proved, uint32_t *first_op)
 {
 	uint32_t taglen, nops, op, len;
 	const uint8_t *p;
-	struct nfuse_fh fh;
+	struct openmacfuse_fh fh;
 
 	*proved = 0;
 	*first_op = 0;
@@ -3203,7 +3203,7 @@ uint32_t nfs4_compound_gate(struct nfuse_server *s, xdr_dec_t *d, int *proved, u
 		id = xdr_get_opaque_ref(d, NFS4_OPAQUE_LIMIT, &idlen);
 		if (!id || d->err)
 			return NFS4ERR_BADXDR;
-		for (k = 0; k < NFUSE_MAX_CLIENTS; k++)
+		for (k = 0; k < OPENMACFUSE_MAX_CLIENTS; k++)
 			if (s->clients[k].used && s->clients[k].confirmed &&
 			    s->clients[k].idlen == idlen && memcmp(s->clients[k].id, id, idlen) == 0)
 				return NFS4_OK;
@@ -3213,7 +3213,7 @@ uint32_t nfs4_compound_gate(struct nfuse_server *s, xdr_dec_t *d, int *proved, u
 		p = xdr_get_opaque_ref(d, NFS4_FHSIZE, &len);
 		if (!p || d->err)
 			return NFS4ERR_BADHANDLE;
-		if (nfuse_fh_decode(s, p, len, &fh) != NFS4_OK)
+		if (openmacfuse_fh_decode(s, p, len, &fh) != NFS4_OK)
 			return NFS4ERR_STALE;
 		*proved = 1;
 		return NFS4_OK;
@@ -3245,7 +3245,7 @@ int nfs4_compound_fail(xdr_dec_t *d, xdr_enc_t *e, uint32_t status)
 	return 0;
 }
 
-int nfs4_compound(struct nfuse_server *s, const rpc_call_t *call,
+int nfs4_compound(struct openmacfuse_server *s, const rpc_call_t *call,
 		  xdr_dec_t *d, xdr_enc_t *e, unsigned *flags)
 {
 	struct cctx c;
@@ -3281,7 +3281,7 @@ int nfs4_compound(struct nfuse_server *s, const rpc_call_t *call,
 		 * handles stay valid)
 		 */
 		s->test_reboot = 0;
-		nfuse_state_reboot(s);
+		openmacfuse_state_reboot(s);
 		if (s->log)
 			s->log("test hook: simulating a server restart (#%llu), all old stateids / clientids are now invalid",
 			       (unsigned long long)s->reboots);
@@ -3289,7 +3289,7 @@ int nfs4_compound(struct nfuse_server *s, const rpc_call_t *call,
 	trace[0] = 0;
 	s->compounds++;
 	if (s->be.ops->begin) {
-		struct nfuse_cred cr = { call->cred.uid, call->cred.gid };
+		struct openmacfuse_cred cr = { call->cred.uid, call->cred.gid };
 		s->be.ops->begin(s->be.ctx, &cr);
 	}
 
@@ -3324,7 +3324,7 @@ int nfs4_compound(struct nfuse_server *s, const rpc_call_t *call,
 		c.replayed = 0;
 		c.rec_has_other = 0;
 		c.open_excl = 0;
-		s->cur_op_t0 = nfuse_uptime_ns();
+		s->cur_op_t0 = openmacfuse_uptime_ns();
 		s->cur_op = opcode;
 		if (s->test_hang_op == opcode && !s->dev_lost) {
 			if (s->test_hang_skip)
@@ -3349,9 +3349,9 @@ int nfs4_compound(struct nfuse_server *s, const rpc_call_t *call,
 		xdr_patch_u32(e, oppos + 4, status);
 
 		/* seqid: record this result in the owner's replay cache */
-		if (!c.replayed && nfuse_seq_bumps(status))
+		if (!c.replayed && openmacfuse_seq_bumps(status))
 			for (k = 0; k < c.nrec; k++) {
-				nfuse_seq_record(c.rec[k], c.rec_seqid[k], opcode, status,
+				openmacfuse_seq_record(c.rec[k], c.rec_seqid[k], opcode, status,
 						 e->buf + bodypos,
 						 (uint32_t)(e->len - bodypos),
 						 opcode == OP_OPEN && status == NFS4_OK ?
@@ -3361,7 +3361,7 @@ int nfs4_compound(struct nfuse_server *s, const rpc_call_t *call,
 					       NFS4_OTHER_SIZE);
 			}
 		if (op_nonidem[opcode])
-			*flags |= NFUSE_CF_CACHE;
+			*flags |= OPENMACFUSE_CF_CACHE;
 		/* test hook: after this op succeeds, drop the whole reply */
 		if (status == NFS4_OK) {
 			int slot = (opcode == OP_OPEN && c.open_excl) ? DROP_OPEN_EXCL :
@@ -3369,7 +3369,7 @@ int nfs4_compound(struct nfuse_server *s, const rpc_call_t *call,
 			if (s->test_drop[slot] > 0) {
 				s->test_drop[slot]--;
 				s->test_dropped++;
-				*flags |= NFUSE_CF_DROP;
+				*flags |= OPENMACFUSE_CF_DROP;
 				if (s->log)
 					s->log("test hook: dropping the reply to %s (xid=%08x)",
 					       slot == DROP_OPEN_EXCL ? "OPEN(EXCLUSIVE4)" :
@@ -3408,7 +3408,7 @@ int nfs4_compound(struct nfuse_server *s, const rpc_call_t *call,
 			       (int)(taglen > 16 ? 16 : taglen),
 			       tag ? (const char *)tag : "", trace, status);
 		else
-			fprintf(stderr, "[nfuse] xid=%08x uid=%u tag=%.*s ops=%s -> %u\n",
+			fprintf(stderr, "[openmacfuse] xid=%08x uid=%u tag=%.*s ops=%s -> %u\n",
 				call->xid, call->cred.uid,
 				(int)(taglen > 16 ? 16 : taglen),
 				tag ? (const char *)tag : "", trace, status);

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Smoke test: start nfuse-m0 -> mount with the system mount_nfs -> ls / cat / checksum -> umount -> server exits cleanly
+# Smoke test: start openmacfuse-m0 -> mount with the system mount_nfs -> ls / cat / checksum -> umount -> server exits cleanly
 #
 # Copyright 2026 The OpenMacFUSE Authors
 # SPDX-License-Identifier: MIT
@@ -10,9 +10,9 @@
 
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-BIN="$HERE/build/nfuse-m0"
+BIN="$HERE/build/openmacfuse-m0"
 MODE=${1:-all}
-EXPORT=NFUSEM0
+EXPORT=OPENMACFUSEM0
 
 PASS=0
 FAIL=0
@@ -22,11 +22,11 @@ bad()  { echo "  [FAIL] $*"; FAIL=$((FAIL + 1)); }
 T()    { perl -e 'alarm shift; exec @ARGV or exit 127' "$@"; }
 
 if [ ! -x "$BIN" ]; then
-	echo "building nfuse-m0 ..."
+	echo "building openmacfuse-m0 ..."
 	make -C "$HERE" >/dev/null || { echo "build failed"; exit 1; }
 fi
 
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/nfusem0.XXXXXX")
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/openmacfusem0.XXXXXX")
 # The mount table records the physical path (/var -> /private/var): resolve before comparing
 WORK=$(cd "$WORK" && pwd -P)
 MNT="$WORK/mnt"
@@ -91,7 +91,7 @@ run_one() {
 	for f in hello.txt big.bin sub link many $'\xe4\xb8\xad\xe6\x96\x87\xe5\x90\x8d.txt'; do
 		echo "$ls_out" | grep -q " $f\( \|$\)" && ok "ls -la shows $f" || bad "ls -la does not show $f"
 	done
-	[ "$(T 20 cat "$MNT/hello.txt")" = "Hello from nfuse M0" ] && ok "cat hello.txt content correct" || bad "cat hello.txt content wrong"
+	[ "$(T 20 cat "$MNT/hello.txt")" = "Hello from openmacfuse M0" ] && ok "cat hello.txt content correct" || bad "cat hello.txt content wrong"
 	[ "$(T 20 cat "$MNT/"$'\xe4\xb8\xad\xe6\x96\x87\xe5\x90\x8d.txt')" = $'\xe4\xb8\xad\xe6\x96\x87\xe5\x86\x85\xe5\xae\xb9' ] && ok "UTF-8 file name readable" || bad "reading the UTF-8 file name failed"
 	[ "$(T 20 cat "$MNT/sub/inner.txt")" = "inner file" ] && ok "file in subdirectory readable" || bad "reading the file in the subdirectory failed"
 	[ "$(T 20 readlink "$MNT/link")" = "hello.txt" ] && ok "readlink correct" || bad "readlink wrong"

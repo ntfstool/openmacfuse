@@ -34,8 +34,8 @@
 #define ADF_SLOTS	4096		/* clean image cache: direct-mapped, a collision overwrites; no attributes is just an "empty" marker */
 
 /* Clean image (synthesised from the backend's current state) */
-struct nfuse_adclean {
-	nfuse_ino_t	x;		/* 0 = empty slot */
+struct openmacfuse_adclean {
+	openmacfuse_ino_t	x;		/* 0 = empty slot */
 	uint64_t	change;		/* X's change when synthesised */
 	uint8_t		*pre;		/* header + FinderInfo + extended attribute block (NULL when empty) */
 	uint32_t	prelen;		/* = start of the resource fork */
@@ -45,9 +45,9 @@ struct nfuse_adclean {
 };
 
 /* Session: the client created / wrote / truncated it, the whole contents are in memory */
-struct nfuse_adimg {
-	struct nfuse_adimg	*next;
-	nfuse_ino_t		x;
+struct openmacfuse_adimg {
+	struct openmacfuse_adimg	*next;
+	openmacfuse_ino_t		x;
 	uint8_t			*full;
 	uint64_t		flen, fcap;
 	int			dirty;
@@ -57,26 +57,26 @@ struct nfuse_adimg {
 static const char *FI = "com.apple.FinderInfo";
 static const char *RF = "com.apple.ResourceFork";
 
-const char *nfuse_adf_target(const char *name)
+const char *openmacfuse_adf_target(const char *name)
 {
 	if (name[0] == '.' && name[1] == '_' && name[2] && strcmp(name, "._.") != 0)
 		return name + 2;
 	return NULL;
 }
 
-static struct nfuse_adclean *slot_of(struct nfuse_server *s, nfuse_ino_t x)
+static struct openmacfuse_adclean *slot_of(struct openmacfuse_server *s, openmacfuse_ino_t x)
 {
 	uint64_t h = x * 0x9e3779b97f4a7c15ull;
 
 	if (!s->adclean) {
-		s->adclean = calloc(ADF_SLOTS, sizeof(struct nfuse_adclean));
+		s->adclean = calloc(ADF_SLOTS, sizeof(struct openmacfuse_adclean));
 		if (!s->adclean)
 			return NULL;
 	}
-	return &((struct nfuse_adclean *)s->adclean)[(h >> 32) & (ADF_SLOTS - 1)];
+	return &((struct openmacfuse_adclean *)s->adclean)[(h >> 32) & (ADF_SLOTS - 1)];
 }
 
-static void clean_clear(struct nfuse_server *s, struct nfuse_adclean *c)
+static void clean_clear(struct openmacfuse_server *s, struct openmacfuse_adclean *c)
 {
 	if (c->pre)
 		s->adf_pre_bytes -= c->prelen;
@@ -84,17 +84,17 @@ static void clean_clear(struct nfuse_server *s, struct nfuse_adclean *c)
 	memset(c, 0, sizeof(*c));
 }
 
-static void clean_forget(struct nfuse_server *s, nfuse_ino_t x)
+static void clean_forget(struct openmacfuse_server *s, openmacfuse_ino_t x)
 {
-	struct nfuse_adclean *c = slot_of(s, x);
+	struct openmacfuse_adclean *c = slot_of(s, x);
 
 	if (c && c->x == x)
 		clean_clear(s, c);
 }
 
-static struct nfuse_adimg *sess_find(struct nfuse_server *s, nfuse_ino_t x, int create)
+static struct openmacfuse_adimg *sess_find(struct openmacfuse_server *s, openmacfuse_ino_t x, int create)
 {
-	struct nfuse_adimg *m;
+	struct openmacfuse_adimg *m;
 
 	for (m = s->adimgs; m; m = m->next)
 		if (m->x == x)
@@ -111,9 +111,9 @@ static struct nfuse_adimg *sess_find(struct nfuse_server *s, nfuse_ino_t x, int 
 	return m;
 }
 
-static void sess_free(struct nfuse_server *s, struct nfuse_adimg *m)
+static void sess_free(struct openmacfuse_server *s, struct openmacfuse_adimg *m)
 {
-	struct nfuse_adimg **pp = &s->adimgs;
+	struct openmacfuse_adimg **pp = &s->adimgs;
 
 	while (*pp && *pp != m)
 		pp = &(*pp)->next;
@@ -124,10 +124,10 @@ static void sess_free(struct nfuse_server *s, struct nfuse_adimg *m)
 	free(m);
 }
 
-static int x_change(struct nfuse_server *s, nfuse_ino_t x, uint64_t *chg)
+static int x_change(struct openmacfuse_server *s, openmacfuse_ino_t x, uint64_t *chg)
 {
-	struct nfuse_attr st;
-	int r = s->be.ops->getattr(s->be.ctx, x, &st, NFUSE_WANT_BASIC);
+	struct openmacfuse_attr st;
+	int r = s->be.ops->getattr(s->be.ctx, x, &st, OPENMACFUSE_WANT_BASIC);
 
 	if (r)
 		return r;
@@ -136,7 +136,7 @@ static int x_change(struct nfuse_server *s, nfuse_ino_t x, uint64_t *chg)
 }
 
 /* X's attribute name list (malloc'd; *len is the size in bytes) */
-static int x_list(struct nfuse_server *s, nfuse_ino_t x, char **out, int *len)
+static int x_list(struct openmacfuse_server *s, openmacfuse_ino_t x, char **out, int *len)
 {
 	int n;
 
@@ -162,13 +162,13 @@ static int x_list(struct nfuse_server *s, nfuse_ino_t x, char **out, int *len)
 	return 0;
 }
 
-static int x_size(struct nfuse_server *s, nfuse_ino_t x, const char *name)
+static int x_size(struct openmacfuse_server *s, openmacfuse_ino_t x, const char *name)
 {
 	return s->be.ops->getxattr ? s->be.ops->getxattr(s->be.ctx, x, name, NULL, 0) : -ENOATTR;
 }
 
 /* Read the whole value of one of X's attributes (for small values; the resource fork does not come through here) */
-static int x_read_all(struct nfuse_server *s, nfuse_ino_t x, const char *name, uint8_t **out,
+static int x_read_all(struct openmacfuse_server *s, openmacfuse_ino_t x, const char *name, uint8_t **out,
 		      uint32_t *len)
 {
 	int n = x_size(s, x, name), got = 0, r;
@@ -194,10 +194,10 @@ static int x_read_all(struct nfuse_server *s, nfuse_ino_t x, const char *name, u
 }
 
 /* Synthesise the clean image from the backend's current state (reused as is if up to date); returns the slot, NULL on failure (*err) */
-static struct nfuse_adclean *clean_get(struct nfuse_server *s, nfuse_ino_t x, int *err)
+static struct openmacfuse_adclean *clean_get(struct openmacfuse_server *s, openmacfuse_ino_t x, int *err)
 {
-	struct nfuse_adclean *c = slot_of(s, x);
-	struct nfuse_ad_val *vals = NULL;
+	struct openmacfuse_adclean *c = slot_of(s, x);
+	struct openmacfuse_ad_val *vals = NULL;
 	uint8_t finfo[32], **bufs = NULL;
 	char *names = NULL, *p;
 	int nl = 0, r, haveFi = 0, nv = 0, cnt = 0, i;
@@ -262,10 +262,10 @@ static struct nfuse_adclean *clean_get(struct nfuse_server *s, nfuse_ino_t x, in
 	c->x = x;
 	c->change = chg;
 	c->rsrc_real = rlen > 0;
-	c->rsrc_len = rlen ? rlen : NFUSE_AD_BLANK_RSRC_LEN;
+	c->rsrc_len = rlen ? rlen : OPENMACFUSE_AD_BLANK_RSRC_LEN;
 	c->empty = !haveFi && !rlen && nv == 0;
 	if (!c->empty) {
-		r = nfuse_ad_build_prefix(haveFi ? finfo : NULL, vals, (uint32_t)nv, c->rsrc_len,
+		r = openmacfuse_ad_build_prefix(haveFi ? finfo : NULL, vals, (uint32_t)nv, c->rsrc_len,
 					  &c->pre, &c->prelen, &roff);
 		if (!r && (uint64_t)c->prelen + c->rsrc_len > ADF_IMG_MAX)
 			r = -EFBIG;
@@ -290,7 +290,7 @@ out:
 }
 
 /* Bytes [off, off+count) of a clean image (front part + resource fork read by offset) */
-static int clean_read(struct nfuse_server *s, nfuse_ino_t x, const struct nfuse_adclean *c,
+static int clean_read(struct openmacfuse_server *s, openmacfuse_ino_t x, const struct openmacfuse_adclean *c,
 		      uint8_t *buf, uint32_t count, uint64_t off)
 {
 	uint64_t total = c->empty ? 0 : (uint64_t)c->prelen + c->rsrc_len;
@@ -310,7 +310,7 @@ static int clean_read(struct nfuse_server *s, nfuse_ino_t x, const struct nfuse_
 		int r;
 
 		if (!c->rsrc_real) {
-			memcpy(buf + got, nfuse_ad_blank_rsrc() + ro, count - got);
+			memcpy(buf + got, openmacfuse_ad_blank_rsrc() + ro, count - got);
 			got = count;
 			break;
 		}
@@ -327,7 +327,7 @@ static int clean_read(struct nfuse_server *s, nfuse_ino_t x, const struct nfuse_
 	return (int)got;
 }
 
-static int full_reserve(struct nfuse_server *s, struct nfuse_adimg *m, uint64_t len)
+static int full_reserve(struct openmacfuse_server *s, struct openmacfuse_adimg *m, uint64_t len)
 {
 	uint64_t nc;
 	uint8_t *nb;
@@ -354,10 +354,10 @@ static int full_reserve(struct nfuse_server *s, struct nfuse_adimg *m, uint64_t 
 }
 
 /* Session (if there is none, load the whole clean image into memory) */
-static struct nfuse_adimg *sess_get(struct nfuse_server *s, nfuse_ino_t x, int *err)
+static struct openmacfuse_adimg *sess_get(struct openmacfuse_server *s, openmacfuse_ino_t x, int *err)
 {
-	struct nfuse_adimg *m = sess_find(s, x, 0);
-	struct nfuse_adclean *c;
+	struct openmacfuse_adimg *m = sess_find(s, x, 0);
+	struct openmacfuse_adclean *c;
 	uint64_t total, off = 0;
 	int r;
 
@@ -395,8 +395,8 @@ static struct nfuse_adimg *sess_get(struct nfuse_server *s, nfuse_ino_t x, int *
 
 /* ---------- Rename aliases (see adfile.h) ---------- */
 
-struct nfuse_adalias {
-	nfuse_ino_t	dir, ndir, y;		/* dir = 0 is an empty slot */
+struct openmacfuse_adalias {
+	openmacfuse_ino_t	dir, ndir, y;		/* dir = 0 is an empty slot */
 	uint64_t	expire_ms;
 	char		name[256];
 	char		nname[256];
@@ -410,9 +410,9 @@ static uint64_t mono_ms(void)
 	return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
-static struct nfuse_adalias *alias_find(struct nfuse_server *s, nfuse_ino_t dir, const char *name)
+static struct openmacfuse_adalias *alias_find(struct openmacfuse_server *s, openmacfuse_ino_t dir, const char *name)
 {
-	struct nfuse_adalias *a = s->adalias;
+	struct openmacfuse_adalias *a = s->adalias;
 	int i;
 
 	for (i = 0; a && i < ADF_ALIASES; i++)
@@ -421,18 +421,18 @@ static struct nfuse_adalias *alias_find(struct nfuse_server *s, nfuse_ino_t dir,
 	return NULL;
 }
 
-void nfuse_adf_renamed(struct nfuse_server *s, nfuse_ino_t odir, const char *oname,
-		       nfuse_ino_t ndir, const char *nname, nfuse_ino_t y)
+void openmacfuse_adf_renamed(struct openmacfuse_server *s, openmacfuse_ino_t odir, const char *oname,
+		       openmacfuse_ino_t ndir, const char *nname, openmacfuse_ino_t y)
 {
-	struct nfuse_adalias *a, *slot;
+	struct openmacfuse_adalias *a, *slot;
 	uint64_t now = mono_ms();
 	int i;
 
-	if (!s->adfile || nfuse_adf_target(oname) || strlen(oname) >= sizeof(slot->name) ||
+	if (!s->adfile || openmacfuse_adf_target(oname) || strlen(oname) >= sizeof(slot->name) ||
 	    strlen(nname) >= sizeof(slot->nname))
 		return;
 	if (!s->adalias) {
-		s->adalias = calloc(ADF_ALIASES, sizeof(struct nfuse_adalias));
+		s->adalias = calloc(ADF_ALIASES, sizeof(struct openmacfuse_adalias));
 		if (!s->adalias)
 			return;
 	}
@@ -456,11 +456,11 @@ void nfuse_adf_renamed(struct nfuse_server *s, nfuse_ino_t odir, const char *ona
 	s->adf_alias_adds++;
 }
 
-int nfuse_adf_alias(struct nfuse_server *s, nfuse_ino_t dir, const char *name, nfuse_ino_t *y)
+int openmacfuse_adf_alias(struct openmacfuse_server *s, openmacfuse_ino_t dir, const char *name, openmacfuse_ino_t *y)
 {
-	const char *t = nfuse_adf_target(name);
-	struct nfuse_adalias *a;
-	nfuse_ino_t cur, now_y;
+	const char *t = openmacfuse_adf_target(name);
+	struct openmacfuse_adalias *a;
+	openmacfuse_ino_t cur, now_y;
 
 	if (!t || !s->adalias)
 		return 0;
@@ -477,20 +477,20 @@ int nfuse_adf_alias(struct nfuse_server *s, nfuse_ino_t dir, const char *name, n
 	return 1;
 }
 
-void nfuse_adf_alias_drop(struct nfuse_server *s, nfuse_ino_t dir, const char *name)
+void openmacfuse_adf_alias_drop(struct openmacfuse_server *s, openmacfuse_ino_t dir, const char *name)
 {
-	const char *t = nfuse_adf_target(name);
-	struct nfuse_adalias *a = t ? alias_find(s, dir, t) : NULL;
+	const char *t = openmacfuse_adf_target(name);
+	struct openmacfuse_adalias *a = t ? alias_find(s, dir, t) : NULL;
 
 	if (a)
 		memset(a, 0, sizeof(*a));
 }
 
-int nfuse_adf_lookup(struct nfuse_server *s, nfuse_ino_t dir, const char *name,
-		     nfuse_ino_t *x, int *exists)
+int openmacfuse_adf_lookup(struct openmacfuse_server *s, openmacfuse_ino_t dir, const char *name,
+		     openmacfuse_ino_t *x, int *exists)
 {
-	const char *t = nfuse_adf_target(name);
-	struct nfuse_adclean *c;
+	const char *t = openmacfuse_adf_target(name);
+	struct openmacfuse_adclean *c;
 	int r;
 
 	*exists = 0;
@@ -498,7 +498,7 @@ int nfuse_adf_lookup(struct nfuse_server *s, nfuse_ino_t dir, const char *name,
 		return -ENOENT;
 	if (s->be.ops->lookup(s->be.ctx, dir, t, x)) {
 		/* A is not there: was it just renamed away (the client is writing `._A` under the old name)? If so treat it as the virtual `._` of the new name */
-		if (!nfuse_adf_alias(s, dir, name, x))
+		if (!openmacfuse_adf_alias(s, dir, name, x))
 			return -ENOENT;
 		s->adf_alias_hits++;
 	}
@@ -515,10 +515,10 @@ int nfuse_adf_lookup(struct nfuse_server *s, nfuse_ino_t dir, const char *name,
 	return 0;
 }
 
-int nfuse_adf_attr(struct nfuse_server *s, nfuse_ino_t x, struct nfuse_attr *st)
+int openmacfuse_adf_attr(struct openmacfuse_server *s, openmacfuse_ino_t x, struct openmacfuse_attr *st)
 {
-	struct nfuse_adimg *m = sess_find(s, x, 0);
-	struct nfuse_adclean *c = NULL;
+	struct openmacfuse_adimg *m = sess_find(s, x, 0);
+	struct openmacfuse_adclean *c = NULL;
 	int r;
 
 	if (!m) {
@@ -528,7 +528,7 @@ int nfuse_adf_attr(struct nfuse_server *s, nfuse_ino_t x, struct nfuse_attr *st)
 		if (c->empty)
 			return -ENOENT;		/* X has no attributes any more: `._X` does not exist */
 	}
-	st->ino = NFUSE_ADF_FILEID(x);
+	st->ino = OPENMACFUSE_ADF_FILEID(x);
 	st->mode = S_IFREG | (st->mode & 0666);
 	st->nlink = 1;
 	st->size = m ? m->flen : (uint64_t)c->prelen + c->rsrc_len;
@@ -539,11 +539,11 @@ int nfuse_adf_attr(struct nfuse_server *s, nfuse_ino_t x, struct nfuse_attr *st)
 	return 0;
 }
 
-int nfuse_adf_read(struct nfuse_server *s, nfuse_ino_t x, void *buf, uint32_t count,
+int openmacfuse_adf_read(struct openmacfuse_server *s, openmacfuse_ino_t x, void *buf, uint32_t count,
 		   uint64_t off)
 {
-	struct nfuse_adimg *m = sess_find(s, x, 0);
-	struct nfuse_adclean *c;
+	struct openmacfuse_adimg *m = sess_find(s, x, 0);
+	struct openmacfuse_adclean *c;
 	int r;
 
 	s->adf_reads++;
@@ -565,10 +565,10 @@ int nfuse_adf_read(struct nfuse_server *s, nfuse_ino_t x, void *buf, uint32_t co
 	return r;
 }
 
-int nfuse_adf_write(struct nfuse_server *s, nfuse_ino_t x, const void *buf, uint32_t len,
+int openmacfuse_adf_write(struct openmacfuse_server *s, openmacfuse_ino_t x, const void *buf, uint32_t len,
 		    uint64_t off)
 {
-	struct nfuse_adimg *m;
+	struct openmacfuse_adimg *m;
 	int r;
 
 	if (off + len > ADF_IMG_MAX)
@@ -591,9 +591,9 @@ int nfuse_adf_write(struct nfuse_server *s, nfuse_ino_t x, const void *buf, uint
 	return (int)len;
 }
 
-int nfuse_adf_truncate(struct nfuse_server *s, nfuse_ino_t x, uint64_t size)
+int openmacfuse_adf_truncate(struct openmacfuse_server *s, openmacfuse_ino_t x, uint64_t size)
 {
-	struct nfuse_adimg *m = sess_get(s, x, &(int){0});
+	struct openmacfuse_adimg *m = sess_get(s, x, &(int){0});
 	int r;
 
 	if (!m)
@@ -609,10 +609,10 @@ int nfuse_adf_truncate(struct nfuse_server *s, nfuse_ino_t x, uint64_t size)
 	return 0;
 }
 
-int nfuse_adf_create(struct nfuse_server *s, nfuse_ino_t x, int trunc)
+int openmacfuse_adf_create(struct openmacfuse_server *s, openmacfuse_ino_t x, int trunc)
 {
 	int r;
-	struct nfuse_adimg *m = sess_get(s, x, &r);
+	struct openmacfuse_adimg *m = sess_get(s, x, &r);
 
 	if (!m)
 		return r;
@@ -643,7 +643,7 @@ static int buf_read_cb(void *ctx, void *out, uint32_t size, uint64_t off)
 }
 
 /* Does the value of name in the backend already equal v (compared chunk by chunk) */
-static int x_equal(struct nfuse_server *s, nfuse_ino_t x, const char *name, const uint8_t *v,
+static int x_equal(struct openmacfuse_server *s, openmacfuse_ino_t x, const char *name, const uint8_t *v,
 		   uint64_t len)
 {
 	uint8_t *tmp;
@@ -667,9 +667,9 @@ static int x_equal(struct nfuse_server *s, nfuse_ino_t x, const char *name, cons
 }
 
 /* Sync an AppleDouble image (b, len) into x's backend attributes */
-static int sync_to(struct nfuse_server *s, nfuse_ino_t x, const uint8_t *b, uint64_t len)
+static int sync_to(struct openmacfuse_server *s, openmacfuse_ino_t x, const uint8_t *b, uint64_t len)
 {
-	struct nfuse_ad ad;
+	struct openmacfuse_ad ad;
 	struct buf_rd rd = { b, len };
 	char *names = NULL, *p;
 	int nl, r, err = 0;
@@ -677,7 +677,7 @@ static int sync_to(struct nfuse_server *s, nfuse_ino_t x, const uint8_t *b, uint
 
 	memset(&ad, 0, sizeof(ad));
 	if (len) {
-		r = nfuse_ad_parse(buf_read_cb, &rd, len, &ad);
+		r = openmacfuse_ad_parse(buf_read_cb, &rd, len, &ad);
 		if (r) {
 			s->adf_invalid++;
 			if (s->log)
@@ -687,7 +687,7 @@ static int sync_to(struct nfuse_server *s, nfuse_ino_t x, const uint8_t *b, uint
 		}
 	}
 	for (i = 0; i < ad.n; i++) {
-		const struct nfuse_ad_attr *a = &ad.a[i];
+		const struct openmacfuse_ad_attr *a = &ad.a[i];
 
 		if (a->off + a->len > len)
 			continue;
@@ -720,7 +720,7 @@ static int sync_to(struct nfuse_server *s, nfuse_ino_t x, const uint8_t *b, uint
 	/* Attributes no longer present in the image: remove them */
 	if (x_list(s, x, &names, &nl) == 0) {
 		for (p = names; names && p < names + nl; p += strlen(p) + 1) {
-			if (!*p || nfuse_ad_find(&ad, p))
+			if (!*p || openmacfuse_ad_find(&ad, p))
 				continue;
 			r = s->be.ops->removexattr ? s->be.ops->removexattr(s->be.ctx, x, p) : -ENOTSUP;
 			if (r && r != -ENOATTR)
@@ -730,13 +730,13 @@ static int sync_to(struct nfuse_server *s, nfuse_ino_t x, const uint8_t *b, uint
 		}
 	}
 	free(names);
-	nfuse_ad_free(&ad);
+	openmacfuse_ad_free(&ad);
 	return err;
 }
 
-int nfuse_adf_apply(struct nfuse_server *s, nfuse_ino_t x)
+int openmacfuse_adf_apply(struct openmacfuse_server *s, openmacfuse_ino_t x)
 {
-	struct nfuse_adimg *m = sess_find(s, x, 0);
+	struct openmacfuse_adimg *m = sess_find(s, x, 0);
 	int r = 0;
 
 	if (!m)
@@ -753,9 +753,9 @@ int nfuse_adf_apply(struct nfuse_server *s, nfuse_ino_t x)
 	return r;
 }
 
-int nfuse_adf_remove(struct nfuse_server *s, nfuse_ino_t x)
+int openmacfuse_adf_remove(struct openmacfuse_server *s, openmacfuse_ino_t x)
 {
-	struct nfuse_adimg *m = sess_find(s, x, 0);
+	struct openmacfuse_adimg *m = sess_find(s, x, 0);
 	int r;
 
 	if (m)
@@ -767,15 +767,15 @@ int nfuse_adf_remove(struct nfuse_server *s, nfuse_ino_t x)
 	return r;
 }
 
-static int adf_copy_to(struct nfuse_server *s, nfuse_ino_t a, nfuse_ino_t b)
+static int adf_copy_to(struct openmacfuse_server *s, openmacfuse_ino_t a, openmacfuse_ino_t b)
 {
-	struct nfuse_adimg *m;
+	struct openmacfuse_adimg *m;
 	int r;
 
 	m = sess_get(s, a, &r);
 	if (!m)
 		return r;
-	nfuse_adf_forget(s, b);
+	openmacfuse_adf_forget(s, b);
 	r = sync_to(s, b, m->full, m->flen);
 	clean_forget(s, b);
 	if (s->be.ops->invalidate)
@@ -783,17 +783,17 @@ static int adf_copy_to(struct nfuse_server *s, nfuse_ino_t a, nfuse_ino_t b)
 	return r;
 }
 
-int nfuse_adf_move(struct nfuse_server *s, nfuse_ino_t a, nfuse_ino_t b)
+int openmacfuse_adf_move(struct openmacfuse_server *s, openmacfuse_ino_t a, openmacfuse_ino_t b)
 {
 	int r = adf_copy_to(s, a, b);
 
 	if (r)
 		return r;
 	s->adf_renames++;
-	return nfuse_adf_remove(s, a);
+	return openmacfuse_adf_remove(s, a);
 }
 
-int nfuse_adf_copy(struct nfuse_server *s, nfuse_ino_t a, nfuse_ino_t b)
+int openmacfuse_adf_copy(struct openmacfuse_server *s, openmacfuse_ino_t a, openmacfuse_ino_t b)
 {
 	int r = adf_copy_to(s, a, b);
 
@@ -802,22 +802,22 @@ int nfuse_adf_copy(struct nfuse_server *s, nfuse_ino_t a, nfuse_ino_t b)
 	return r;
 }
 
-void nfuse_adf_forget(struct nfuse_server *s, nfuse_ino_t x)
+void openmacfuse_adf_forget(struct openmacfuse_server *s, openmacfuse_ino_t x)
 {
-	struct nfuse_adimg *m = sess_find(s, x, 0);
+	struct openmacfuse_adimg *m = sess_find(s, x, 0);
 
 	if (m)
 		sess_free(s, m);
 	clean_forget(s, x);
 }
 
-void nfuse_adf_flush_all(struct nfuse_server *s)
+void openmacfuse_adf_flush_all(struct openmacfuse_server *s)
 {
 	while (s->adimgs)
-		nfuse_adf_apply(s, s->adimgs->x);
+		openmacfuse_adf_apply(s, s->adimgs->x);
 }
 
-void nfuse_adf_free_all(struct nfuse_server *s)
+void openmacfuse_adf_free_all(struct openmacfuse_server *s)
 {
 	int i;
 
@@ -827,7 +827,7 @@ void nfuse_adf_free_all(struct nfuse_server *s)
 	s->adalias = NULL;
 	if (s->adclean) {
 		for (i = 0; i < ADF_SLOTS; i++)
-			clean_clear(s, &((struct nfuse_adclean *)s->adclean)[i]);
+			clean_clear(s, &((struct openmacfuse_adclean *)s->adclean)[i]);
 		free(s->adclean);
 		s->adclean = NULL;
 	}

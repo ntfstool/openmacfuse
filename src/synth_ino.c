@@ -1,7 +1,7 @@
 /*
  * synth_ino.c - assigns stable inode numbers by path when the file system does not provide any
  *
- * nfuse's backend builds its node table and NFS file handles from inode numbers (the use_ino semantics
+ * openmacfuse's backend builds its node table and NFS file handles from inode numbers (the use_ino semantics
  * of FUSE). Most file systems supply real inode numbers; some (exFAT and disk-image drivers, for example) leave
  * st_ino unset in getattr (always 0), which used to make every LOOKUP return an I/O error and
  * directory listings come back empty.
@@ -31,7 +31,7 @@ struct ent {
 
 #define TOMB	((char *)1)
 
-struct nfuse_synth {
+struct openmacfuse_synth {
 	struct ent	*t;
 	size_t		cap;		/* power of 2 */
 	size_t		used;		/* includes deleted slots */
@@ -48,9 +48,9 @@ static uint64_t hash_str(const char *s)
 	return h;
 }
 
-struct nfuse_synth *nfuse_synth_new(void)
+struct openmacfuse_synth *openmacfuse_synth_new(void)
 {
-	struct nfuse_synth *s = calloc(1, sizeof(*s));
+	struct openmacfuse_synth *s = calloc(1, sizeof(*s));
 
 	if (!s)
 		return NULL;
@@ -64,7 +64,7 @@ struct nfuse_synth *nfuse_synth_new(void)
 	return s;
 }
 
-void nfuse_synth_free(struct nfuse_synth *s)
+void openmacfuse_synth_free(struct openmacfuse_synth *s)
 {
 	size_t i;
 
@@ -78,7 +78,7 @@ void nfuse_synth_free(struct nfuse_synth *s)
 }
 
 /* Find the slot for path: returns it if found; otherwise returns the first usable slot (*found = 0) */
-static struct ent *slot(struct nfuse_synth *s, const char *path, int *found)
+static struct ent *slot(struct openmacfuse_synth *s, const char *path, int *found)
 {
 	size_t m = s->cap - 1, i = (size_t)hash_str(path) & m;
 	struct ent *free_slot = NULL;
@@ -101,9 +101,9 @@ static struct ent *slot(struct nfuse_synth *s, const char *path, int *found)
 	}
 }
 
-static int grow(struct nfuse_synth *s)
+static int grow(struct openmacfuse_synth *s)
 {
-	struct nfuse_synth n = *s;
+	struct openmacfuse_synth n = *s;
 	size_t i;
 
 	n.cap = s->cap * 2;
@@ -128,7 +128,7 @@ static int grow(struct nfuse_synth *s)
 	return 0;
 }
 
-static int put(struct nfuse_synth *s, char *path, uint64_t ino)
+static int put(struct openmacfuse_synth *s, char *path, uint64_t ino)
 {
 	struct ent *e;
 	int f;
@@ -150,7 +150,7 @@ static int put(struct nfuse_synth *s, char *path, uint64_t ino)
 	return 0;
 }
 
-uint64_t nfuse_synth_get(struct nfuse_synth *s, const char *path)
+uint64_t openmacfuse_synth_get(struct openmacfuse_synth *s, const char *path)
 {
 	struct ent *e;
 	char *dup;
@@ -183,7 +183,7 @@ static int under(const char *p, const char *path, size_t pl)
 	return p[pl] == '/' || (pl == 1 && path[0] == '/');
 }
 
-void nfuse_synth_drop(struct nfuse_synth *s, const char *path, int subtree)
+void openmacfuse_synth_drop(struct openmacfuse_synth *s, const char *path, int subtree)
 {
 	size_t i, pl;
 
@@ -205,7 +205,7 @@ void nfuse_synth_drop(struct nfuse_synth *s, const char *path, int subtree)
 	}
 }
 
-void nfuse_synth_rename(struct nfuse_synth *s, const char *from, const char *to)
+void openmacfuse_synth_rename(struct openmacfuse_synth *s, const char *from, const char *to)
 {
 	size_t i, fl, tl, n = 0, k;
 	struct { char *path; uint64_t ino; } *mv = NULL;
@@ -215,7 +215,7 @@ void nfuse_synth_rename(struct nfuse_synth *s, const char *from, const char *to)
 	fl = strlen(from);
 	tl = strlen(to);
 	/* Drop the target path (and everything below it) first: it has been overwritten */
-	nfuse_synth_drop(s, to, 1);
+	openmacfuse_synth_drop(s, to, 1);
 	/* Detach everything that has to move first, then reinsert under the new paths (reinserting may grow the table, so it cannot be done while scanning) */
 	for (i = 0; i < s->cap; i++) {
 		struct ent *e = &s->t[i];
@@ -250,7 +250,7 @@ void nfuse_synth_rename(struct nfuse_synth *s, const char *from, const char *to)
 	free(mv);
 }
 
-size_t nfuse_synth_count(const struct nfuse_synth *s)
+size_t openmacfuse_synth_count(const struct openmacfuse_synth *s)
 {
 	return s ? s->live : 0;
 }

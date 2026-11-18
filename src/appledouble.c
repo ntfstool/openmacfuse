@@ -31,10 +31,10 @@ static uint16_t be16(const uint8_t *p)
 	return (uint16_t)((p[0] << 8) | p[1]);
 }
 
-static int ad_add(struct nfuse_ad *ad, const char *name, size_t nl, uint64_t off,
+static int ad_add(struct openmacfuse_ad *ad, const char *name, size_t nl, uint64_t off,
 		  uint64_t len)
 {
-	struct nfuse_ad_attr *na = realloc(ad->a, (ad->n + 1) * sizeof(*na));
+	struct openmacfuse_ad_attr *na = realloc(ad->a, (ad->n + 1) * sizeof(*na));
 
 	if (!na)
 		return -ENOMEM;
@@ -51,7 +51,7 @@ static int ad_add(struct nfuse_ad *ad, const char *name, size_t nl, uint64_t off
 }
 
 /* Read all of [off, off+size); returns -EIO on a short read */
-static int rd_full(nfuse_ad_read_fn rd, void *ctx, uint8_t *buf, uint32_t size,
+static int rd_full(openmacfuse_ad_read_fn rd, void *ctx, uint8_t *buf, uint32_t size,
 		   uint64_t off)
 {
 	uint32_t got = 0;
@@ -77,7 +77,7 @@ static int all_zero(const uint8_t *p, size_t n)
 	return 1;
 }
 
-int nfuse_ad_parse(nfuse_ad_read_fn rd, void *ctx, uint64_t fsize, struct nfuse_ad *out)
+int openmacfuse_ad_parse(openmacfuse_ad_read_fn rd, void *ctx, uint64_t fsize, struct openmacfuse_ad *out)
 {
 	uint8_t head[26 + 12 * 16], *buf = NULL;
 	uint32_t nent, i, finfo_off = 0, finfo_len = 0, rsrc_off = 0, rsrc_len = 0;
@@ -116,7 +116,7 @@ int nfuse_ad_parse(nfuse_ad_read_fn rd, void *ctx, uint64_t fsize, struct nfuse_
 		uint8_t fi[32];
 
 		if (rd_full(rd, ctx, fi, 32, finfo_off) == 0 && !all_zero(fi, 32) &&
-		    (r = ad_add(out, NFUSE_XA_FINDERINFO, strlen(NFUSE_XA_FINDERINFO),
+		    (r = ad_add(out, OPENMACFUSE_XA_FINDERINFO, strlen(OPENMACFUSE_XA_FINDERINFO),
 				finfo_off, 32)))
 			goto fail;
 	}
@@ -172,18 +172,18 @@ done_attrs:
 			    memmem(rb, sizeof(rb), "intentionally left blank", 24))
 				blank = 1;
 		}
-		if (!blank && (r = ad_add(out, NFUSE_XA_RESOURCEFORK,
-					  strlen(NFUSE_XA_RESOURCEFORK), rsrc_off, rsrc_len)))
+		if (!blank && (r = ad_add(out, OPENMACFUSE_XA_RESOURCEFORK,
+					  strlen(OPENMACFUSE_XA_RESOURCEFORK), rsrc_off, rsrc_len)))
 			goto fail;
 	}
 	return 0;
 fail:
 	free(buf);
-	nfuse_ad_free(out);
+	openmacfuse_ad_free(out);
 	return r;
 }
 
-void nfuse_ad_free(struct nfuse_ad *ad)
+void openmacfuse_ad_free(struct openmacfuse_ad *ad)
 {
 	uint32_t i;
 
@@ -194,7 +194,7 @@ void nfuse_ad_free(struct nfuse_ad *ad)
 	ad->n = 0;
 }
 
-const struct nfuse_ad_attr *nfuse_ad_find(const struct nfuse_ad *ad, const char *name)
+const struct openmacfuse_ad_attr *openmacfuse_ad_find(const struct openmacfuse_ad *ad, const char *name)
 {
 	uint32_t i;
 
@@ -224,9 +224,9 @@ static void put16(uint8_t *p, uint16_t v)
 #define AD_ATTR_HDR	(AD_FINFO_OFF + 32 + 2)	/* 0x54 */
 #define AD_RSRC_DEFAULT	0xEE2u
 
-const uint8_t *nfuse_ad_blank_rsrc(void)
+const uint8_t *openmacfuse_ad_blank_rsrc(void)
 {
-	static uint8_t blank[NFUSE_AD_BLANK_RSRC_LEN];
+	static uint8_t blank[OPENMACFUSE_AD_BLANK_RSRC_LEN];
 	static int init;
 
 	if (!init) {
@@ -251,7 +251,7 @@ const uint8_t *nfuse_ad_blank_rsrc(void)
 	return blank;
 }
 
-int nfuse_ad_build_prefix(const uint8_t finfo[32], const struct nfuse_ad_val *v, uint32_t n,
+int openmacfuse_ad_build_prefix(const uint8_t finfo[32], const struct openmacfuse_ad_val *v, uint32_t n,
 			  uint64_t rsrc_len, uint8_t **out, uint32_t *outlen, uint32_t *rsrc_off)
 {
 	uint64_t tab = 0, data = 0, data_start, end, roff;

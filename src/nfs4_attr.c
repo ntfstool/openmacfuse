@@ -23,7 +23,7 @@
 
 #define BIT(n)	(1u << ((n) & 31))
 
-void nfuse_attr_supported(uint32_t w[NFS4_BITMAP_WORDS])
+void openmacfuse_attr_supported(uint32_t w[NFS4_BITMAP_WORDS])
 {
 	w[0] = BIT(FATTR4_SUPPORTED_ATTRS) | BIT(FATTR4_TYPE) |
 	       BIT(FATTR4_FH_EXPIRE_TYPE) | BIT(FATTR4_CHANGE) |
@@ -92,7 +92,7 @@ static void put_numeric_id(xdr_enc_t *e, uint32_t id)
 	xdr_put_string(e, buf);
 }
 
-void nfuse_attr_pseudoroot(struct nfuse_server *s, struct nfuse_attr *st)
+void openmacfuse_attr_pseudoroot(struct openmacfuse_server *s, struct openmacfuse_attr *st)
 {
 	memset(st, 0, sizeof(*st));
 	st->ino = 0xfffffffffffffffeull;
@@ -103,18 +103,18 @@ void nfuse_attr_pseudoroot(struct nfuse_server *s, struct nfuse_attr *st)
 	(void)s;
 }
 
-void nfuse_attr_encode(struct nfuse_server *s, xdr_enc_t *e,
+void openmacfuse_attr_encode(struct openmacfuse_server *s, xdr_enc_t *e,
 		      const uint32_t req[NFS4_BITMAP_WORDS],
-		      const struct nfuse_fh *fh, const struct nfuse_attr *st,
+		      const struct openmacfuse_fh *fh, const struct openmacfuse_attr *st,
 		      uint32_t rdattr_err)
 {
 	uint32_t sup[NFS4_BITMAP_WORDS], res[NFS4_BITMAP_WORDS];
-	struct nfuse_statfs sf;
+	struct openmacfuse_statfs sf;
 	int have_sf = 0, i;
 	size_t lenpos, start;
 
 	memset(&sf, 0, sizeof(sf));
-	nfuse_attr_supported(sup);
+	openmacfuse_attr_supported(sup);
 	for (i = 0; i < NFS4_BITMAP_WORDS; i++)
 		res[i] = req[i] & sup[i];
 	/* write-only attributes have no value to return */
@@ -170,14 +170,14 @@ void nfuse_attr_encode(struct nfuse_server *s, xdr_enc_t *e,
 			break;
 		case FATTR4_NAMED_ATTR:
 			/*
-			 * advertised when the named attribute channel is on (nfuse_xattr=streams,
+			 * advertised when the named attribute channel is on (openmacfuse_xattr=streams,
 			 * the default)
 			 */
 			xdr_put_bool(e, s->named_attr != 0);
 			break;
 		case FATTR4_CASE_INSENSITIVE:
 			/*
-			 * from the nfuse_case mount option (switched to case-sensitive
+			 * from the openmacfuse_case mount option (switched to case-sensitive
 			 * automatically when the pre-mount scan finds conflicts); case_preserving
 			 * is always true
 			 */
@@ -203,8 +203,8 @@ void nfuse_attr_encode(struct nfuse_server *s, xdr_enc_t *e,
 			xdr_put_bool(e, 0);
 			break;
 		case FATTR4_FILEHANDLE: {
-			uint8_t raw[NFUSE_FH_MAXLEN];
-			uint32_t fl = nfuse_fh_encode(fh, raw);
+			uint8_t raw[OPENMACFUSE_FH_MAXLEN];
+			uint32_t fl = openmacfuse_fh_encode(fh, raw);
 			xdr_put_opaque(e, raw, fl);
 			break;
 		}
@@ -293,12 +293,12 @@ void nfuse_attr_encode(struct nfuse_server *s, xdr_enc_t *e,
 	xdr_patch_u32(e, lenpos, (uint32_t)(e->len - start));
 }
 
-uint32_t nfuse_errno_to_nfs4(int neg_errno)
+uint32_t openmacfuse_errno_to_nfs4(int neg_errno)
 {
 	switch (-neg_errno) {
 	case 0:			return NFS4_OK;
-	case NFUSE_E_NOT_SAME:	return NFS4ERR_NOT_SAME;
-	case NFUSE_E_BAD_COOKIE:	return NFS4ERR_BAD_COOKIE;
+	case OPENMACFUSE_E_NOT_SAME:	return NFS4ERR_NOT_SAME;
+	case OPENMACFUSE_E_BAD_COOKIE:	return NFS4ERR_BAD_COOKIE;
 	case ENOATTR:		return NFS4ERR_NOENT;
 	case EPERM:		return NFS4ERR_PERM;
 	case ENOENT:		return NFS4ERR_NOENT;

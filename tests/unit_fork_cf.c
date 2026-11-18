@@ -5,7 +5,7 @@
  * forks; the first time the child initialises an objc class that has +initialize, the objc
  * runtime of macOS 27 aborts. A file system that reads bitmaps on several threads before calling
  * fuse_main crashes exactly this way.
- * This test follows the order of fuse_main: start a thread -> nfuse_fork_warmup -> fork -> the
+ * This test follows the order of fuse_main: start a thread -> openmacfuse_fork_warmup -> fork -> the
  * child does NFC, case folding and the IOKit query of the device watcher (I/O statistics of
  * disk0; only reads the registry, does not touch the device). A second run without the warm-up
  * serves as a control (expected to crash on macOS 27; only recorded, not counted as a failure).
@@ -31,11 +31,11 @@ static int child_work(void)
 	char out[64];
 	int ok = 0;
 
-	if (nfuse_name_nfc("e\xcc\x81", 3, out, sizeof(out)) != 2 || strcmp(out, "\xc3\xa9") != 0)
+	if (openmacfuse_name_nfc("e\xcc\x81", 3, out, sizeof(out)) != 2 || strcmp(out, "\xc3\xa9") != 0)
 		return 2;
-	if (nfuse_name_fold_default("\xc3\xa9", out, sizeof(out)) < 0)
+	if (openmacfuse_name_fold_default("\xc3\xa9", out, sizeof(out)) < 0)
 		return 3;
-	(void)nfuse_devwatch_iostat("disk0", &ok);
+	(void)openmacfuse_devwatch_iostat("disk0", &ok);
 	return ok ? 0 : 4;
 }
 
@@ -47,7 +47,7 @@ static int run(int warm)
 
 	fflush(NULL);
 	if (warm)
-		nfuse_fork_warmup();
+		openmacfuse_fork_warmup();
 	p = fork();
 	if (p == 0)
 		_exit(child_work());
@@ -69,11 +69,11 @@ int main(void)
 	       r0 == 0 ? "fine (this system does not abort)" : "abnormal");
 	r1 = run(1);
 	if (r1 == 0)
-		printf("  [PASS] fork after nfuse_fork_warmup: NFC / folding / IOKit query work in the child\n");
+		printf("  [PASS] fork after openmacfuse_fork_warmup: NFC / folding / IOKit query work in the child\n");
 	else if (r1 == 4)
-		printf("  [PASS] fork after nfuse_fork_warmup: child did not crash (the I/O statistics of disk0 cannot be read on this machine)\n");
+		printf("  [PASS] fork after openmacfuse_fork_warmup: child did not crash (the I/O statistics of disk0 cannot be read on this machine)\n");
 	else {
-		printf("  [FAIL] fork after nfuse_fork_warmup: child result %d\n", r1);
+		printf("  [FAIL] fork after openmacfuse_fork_warmup: child result %d\n", r1);
 		fails++;
 	}
 	return fails ? 1 : 0;

@@ -12,14 +12,14 @@
 
 #include "nfs4_state.h"
 
-static void lock_free(struct nfuse_server *s, struct nfuse_lock *lk);
+static void lock_free(struct openmacfuse_server *s, struct openmacfuse_lock *lk);
 
 static uint32_t rand32(void)
 {
 	return arc4random();
 }
 
-int nfuse_server_init(struct nfuse_server *s, const char *export_name)
+int openmacfuse_server_init(struct openmacfuse_server *s, const char *export_name)
 {
 	uint32_t a, b;
 
@@ -70,7 +70,7 @@ static uint64_t get_be64(const uint8_t *p)
 
 /* ---------- File handles ---------- */
 
-uint32_t nfuse_fh_encode(const struct nfuse_fh *fh, uint8_t out[NFUSE_FH_MAXLEN])
+uint32_t openmacfuse_fh_encode(const struct openmacfuse_fh *fh, uint8_t out[OPENMACFUSE_FH_MAXLEN])
 {
 	uint32_t len = 16, i, n = 0;
 
@@ -78,16 +78,16 @@ uint32_t nfuse_fh_encode(const struct nfuse_fh *fh, uint8_t out[NFUSE_FH_MAXLEN]
 	out[0] = fh->kind;
 	put_be32(out + 4, fh->boot);
 	put_be64(out + 8, fh->ino);
-	if (fh->kind == NFUSE_FH_NODE || fh->kind == NFUSE_FH_ATTRDIR ||
-	    fh->kind == NFUSE_FH_ADFILE) {
-		n = fh->nanc > NFUSE_FH_MAXANC ? NFUSE_FH_MAXANC : fh->nanc;
+	if (fh->kind == OPENMACFUSE_FH_NODE || fh->kind == OPENMACFUSE_FH_ATTRDIR ||
+	    fh->kind == OPENMACFUSE_FH_ADFILE) {
+		n = fh->nanc > OPENMACFUSE_FH_MAXANC ? OPENMACFUSE_FH_MAXANC : fh->nanc;
 		for (i = 0; i < n; i++)
 			put_be64(out + 16 + 8 * i, fh->anc[i]);
 		len += 8 * n;
-	} else if (fh->kind == NFUSE_FH_NAMEDATTR) {
+	} else if (fh->kind == OPENMACFUSE_FH_NAMEDATTR) {
 		put_be64(out + 16, fh->attr_id);
 		len += 8;
-		n = fh->nanc > NFUSE_FH_MAXANC - 1 ? NFUSE_FH_MAXANC - 1 : fh->nanc;
+		n = fh->nanc > OPENMACFUSE_FH_MAXANC - 1 ? OPENMACFUSE_FH_MAXANC - 1 : fh->nanc;
 		for (i = 0; i < n; i++)
 			put_be64(out + 24 + 8 * i, fh->anc[i]);
 		len += 8 * n;
@@ -96,8 +96,8 @@ uint32_t nfuse_fh_encode(const struct nfuse_fh *fh, uint8_t out[NFUSE_FH_MAXLEN]
 	return len;
 }
 
-uint32_t nfuse_fh_decode(const struct nfuse_server *s, const uint8_t *p,
-			uint32_t len, struct nfuse_fh *fh)
+uint32_t openmacfuse_fh_decode(const struct openmacfuse_server *s, const uint8_t *p,
+			uint32_t len, struct openmacfuse_fh *fh)
 {
 	uint32_t i, want;
 
@@ -106,17 +106,17 @@ uint32_t nfuse_fh_decode(const struct nfuse_server *s, const uint8_t *p,
 		return NFS4ERR_BADHANDLE;
 	fh->kind = p[0];
 	fh->nanc = p[1];
-	if (fh->kind < NFUSE_FH_NODE || fh->kind > NFUSE_FH_ADFILE ||
-	    fh->nanc > NFUSE_FH_MAXANC ||
-	    (fh->kind == NFUSE_FH_NAMEDATTR && fh->nanc > NFUSE_FH_MAXANC - 1) ||
-	    (fh->kind == NFUSE_FH_PSEUDOROOT && fh->nanc))
+	if (fh->kind < OPENMACFUSE_FH_NODE || fh->kind > OPENMACFUSE_FH_ADFILE ||
+	    fh->nanc > OPENMACFUSE_FH_MAXANC ||
+	    (fh->kind == OPENMACFUSE_FH_NAMEDATTR && fh->nanc > OPENMACFUSE_FH_MAXANC - 1) ||
+	    (fh->kind == OPENMACFUSE_FH_PSEUDOROOT && fh->nanc))
 		return NFS4ERR_BADHANDLE;
-	want = 16 + 8u * fh->nanc + (fh->kind == NFUSE_FH_NAMEDATTR ? 8 : 0);
+	want = 16 + 8u * fh->nanc + (fh->kind == OPENMACFUSE_FH_NAMEDATTR ? 8 : 0);
 	if (len != want)
 		return NFS4ERR_BADHANDLE;
 	fh->boot = get_be32(p + 4);
 	fh->ino = get_be64(p + 8);
-	if (fh->kind == NFUSE_FH_NAMEDATTR) {
+	if (fh->kind == OPENMACFUSE_FH_NAMEDATTR) {
 		fh->attr_id = get_be64(p + 16);
 		for (i = 0; i < fh->nanc; i++)
 			fh->anc[i] = get_be64(p + 24 + 8 * i);
@@ -131,7 +131,7 @@ uint32_t nfuse_fh_decode(const struct nfuse_server *s, const uint8_t *p,
 
 /* ---------- seqid replay cache ---------- */
 
-int nfuse_seq_check(const struct nfuse_seq *q, uint32_t seqid, uint32_t op)
+int openmacfuse_seq_check(const struct openmacfuse_seq *q, uint32_t seqid, uint32_t op)
 {
 	if (!q->valid)
 		return 0;			/* new owner: any seqid is accepted */
@@ -142,7 +142,7 @@ int nfuse_seq_check(const struct nfuse_seq *q, uint32_t seqid, uint32_t op)
 	return -1;
 }
 
-int nfuse_seq_bumps(uint32_t status)
+int openmacfuse_seq_bumps(uint32_t status)
 {
 	switch (status) {
 	case NFS4ERR_STALE_CLIENTID:
@@ -159,9 +159,9 @@ int nfuse_seq_bumps(uint32_t status)
 	}
 }
 
-void nfuse_seq_record(struct nfuse_seq *q, uint32_t seqid, uint32_t op,
+void openmacfuse_seq_record(struct openmacfuse_seq *q, uint32_t seqid, uint32_t op,
 		      uint32_t status, const uint8_t *body, uint32_t len,
-		      const struct nfuse_fh *fh)
+		      const struct openmacfuse_fh *fh)
 {
 	q->valid = 1;
 	q->seqid = seqid;
@@ -169,7 +169,7 @@ void nfuse_seq_record(struct nfuse_seq *q, uint32_t seqid, uint32_t op,
 	q->status = status;
 	q->len = 0;
 	q->have_fh = 0;
-	if (len > NFUSE_REPLAY_MAX)
+	if (len > OPENMACFUSE_REPLAY_MAX)
 		/*
 		 * does not fit: a replay returns the status only (cannot happen: results are all
 		 * small)
@@ -177,7 +177,7 @@ void nfuse_seq_record(struct nfuse_seq *q, uint32_t seqid, uint32_t op,
 		len = 0;
 	if (len) {
 		if (!q->body)
-			q->body = malloc(NFUSE_REPLAY_MAX);
+			q->body = malloc(OPENMACFUSE_REPLAY_MAX);
 		if (q->body) {
 			memcpy(q->body, body, len);
 			q->len = len;
@@ -193,7 +193,7 @@ void nfuse_seq_record(struct nfuse_seq *q, uint32_t seqid, uint32_t op,
 	}
 }
 
-void nfuse_seq_free(struct nfuse_seq *q)
+void openmacfuse_seq_free(struct openmacfuse_seq *q)
 {
 	free(q->body);
 	free(q->fh);
@@ -209,14 +209,14 @@ void nfuse_seq_free(struct nfuse_seq *q)
  *   new id: new record.
  */
 
-static struct nfuse_client *client_by_id(struct nfuse_server *s,
+static struct openmacfuse_client *client_by_id(struct openmacfuse_server *s,
 					const uint8_t *id, uint32_t idlen,
 					int confirmed)
 {
 	int i;
 
-	for (i = 0; i < NFUSE_MAX_CLIENTS; i++) {
-		struct nfuse_client *c = &s->clients[i];
+	for (i = 0; i < OPENMACFUSE_MAX_CLIENTS; i++) {
+		struct openmacfuse_client *c = &s->clients[i];
 		if (c->used && c->confirmed == confirmed && c->idlen == idlen &&
 		    memcmp(c->id, id, idlen) == 0)
 			return c;
@@ -224,29 +224,29 @@ static struct nfuse_client *client_by_id(struct nfuse_server *s,
 	return NULL;
 }
 
-static struct nfuse_client *client_by_clientid(struct nfuse_server *s,
+static struct openmacfuse_client *client_by_clientid(struct openmacfuse_server *s,
 					      uint64_t clientid)
 {
 	int i;
 
-	for (i = 0; i < NFUSE_MAX_CLIENTS; i++)
+	for (i = 0; i < OPENMACFUSE_MAX_CLIENTS; i++)
 		if (s->clients[i].used && s->clients[i].clientid == clientid)
 			return &s->clients[i];
 	return NULL;
 }
 
-static struct nfuse_client *client_alloc(struct nfuse_server *s)
+static struct openmacfuse_client *client_alloc(struct openmacfuse_server *s)
 {
 	int i, victim = -1;
 
-	for (i = 0; i < NFUSE_MAX_CLIENTS; i++)
+	for (i = 0; i < OPENMACFUSE_MAX_CLIENTS; i++)
 		if (!s->clients[i].used)
 			return &s->clients[i];
 	/*
 	 * table full: evict the unconfirmed record whose lease was renewed longest ago
 	 * (practically never happens with a local client)
 	 */
-	for (i = 0; i < NFUSE_MAX_CLIENTS; i++)
+	for (i = 0; i < OPENMACFUSE_MAX_CLIENTS; i++)
 		if (!s->clients[i].confirmed &&
 		    (victim < 0 || s->clients[i].last_renew < s->clients[victim].last_renew))
 			victim = i;
@@ -264,13 +264,13 @@ static void make_confirm(uint8_t out[8])
 	memcpy(out + 4, &b, 4);
 }
 
-uint32_t nfuse_setclientid(struct nfuse_server *s, const uint8_t verf[8],
+uint32_t openmacfuse_setclientid(struct openmacfuse_server *s, const uint8_t verf[8],
 			  const uint8_t *id, uint32_t idlen,
 			  uint64_t *clientid, uint8_t confirm[8])
 {
-	struct nfuse_client *conf = client_by_id(s, id, idlen, 1);
-	struct nfuse_client *unc = client_by_id(s, id, idlen, 0);
-	struct nfuse_client *c;
+	struct openmacfuse_client *conf = client_by_id(s, id, idlen, 1);
+	struct openmacfuse_client *unc = client_by_id(s, id, idlen, 0);
+	struct openmacfuse_client *c;
 
 	if (idlen > NFS4_OPAQUE_LIMIT)
 		return NFS4ERR_INVAL;
@@ -296,14 +296,14 @@ uint32_t nfuse_setclientid(struct nfuse_server *s, const uint8_t verf[8],
 	return NFS4_OK;
 }
 
-uint32_t nfuse_setclientid_confirm(struct nfuse_server *s, uint64_t clientid,
+uint32_t openmacfuse_setclientid_confirm(struct openmacfuse_server *s, uint64_t clientid,
 				  const uint8_t confirm[8])
 {
 	int i;
-	struct nfuse_client *c = NULL;
+	struct openmacfuse_client *c = NULL;
 
-	for (i = 0; i < NFUSE_MAX_CLIENTS; i++) {
-		struct nfuse_client *x = &s->clients[i];
+	for (i = 0; i < OPENMACFUSE_MAX_CLIENTS; i++) {
+		struct openmacfuse_client *x = &s->clients[i];
 		if (x->used && x->clientid == clientid &&
 		    memcmp(x->confirm, confirm, 8) == 0) {
 			c = x;
@@ -315,8 +315,8 @@ uint32_t nfuse_setclientid_confirm(struct nfuse_server *s, uint64_t clientid,
 	if (c->confirmed)
 		return NFS4_OK;		/* a retransmitted confirm */
 	/* the old confirmed record with the same id gives way */
-	for (i = 0; i < NFUSE_MAX_CLIENTS; i++) {
-		struct nfuse_client *x = &s->clients[i];
+	for (i = 0; i < OPENMACFUSE_MAX_CLIENTS; i++) {
+		struct openmacfuse_client *x = &s->clients[i];
 		if (x != c && x->used && x->confirmed && x->idlen == c->idlen &&
 		    memcmp(x->id, c->id, c->idlen) == 0)
 			memset(x, 0, sizeof(*x));
@@ -336,10 +336,10 @@ uint32_t nfuse_setclientid_confirm(struct nfuse_server *s, uint64_t clientid,
  * once a second, leaving the writing process stuck forever (macOS 27 does issue SETCLIENTID and
  * does not have this problem).
  */
-static struct nfuse_client *client_resurrect(struct nfuse_server *s, uint64_t clientid)
+static struct openmacfuse_client *client_resurrect(struct openmacfuse_server *s, uint64_t clientid)
 {
 	uint32_t b = (uint32_t)(clientid >> 32);
-	struct nfuse_client *c;
+	struct openmacfuse_client *c;
 	int i;
 
 	for (i = 0; i < 4; i++)
@@ -358,9 +358,9 @@ static struct nfuse_client *client_resurrect(struct nfuse_server *s, uint64_t cl
 	return c;
 }
 
-uint32_t nfuse_renew(struct nfuse_server *s, uint64_t clientid)
+uint32_t openmacfuse_renew(struct openmacfuse_server *s, uint64_t clientid)
 {
-	struct nfuse_client *c = client_by_clientid(s, clientid);
+	struct openmacfuse_client *c = client_by_clientid(s, clientid);
 
 	if (!c)
 		c = client_resurrect(s, clientid);
@@ -375,9 +375,9 @@ uint32_t nfuse_renew(struct nfuse_server *s, uint64_t clientid)
 	return NFS4_OK;
 }
 
-uint32_t nfuse_check_clientid(struct nfuse_server *s, uint64_t clientid)
+uint32_t openmacfuse_check_clientid(struct openmacfuse_server *s, uint64_t clientid)
 {
-	struct nfuse_client *c = client_by_clientid(s, clientid);
+	struct openmacfuse_client *c = client_by_clientid(s, clientid);
 
 	if (!c)
 		c = client_resurrect(s, clientid);
@@ -389,7 +389,7 @@ uint32_t nfuse_check_clientid(struct nfuse_server *s, uint64_t clientid)
 
 /* ---------- open-owner ---------- */
 
-int nfuse_stateid_is_special(const struct nfuse_stateid *sid)
+int openmacfuse_stateid_is_special(const struct openmacfuse_stateid *sid)
 {
 	static const uint8_t zero[NFS4_OTHER_SIZE];
 	static const uint8_t ones[NFS4_OTHER_SIZE] = {
@@ -402,11 +402,11 @@ int nfuse_stateid_is_special(const struct nfuse_stateid *sid)
 	return 0;
 }
 
-struct nfuse_owner *nfuse_owner_get(struct nfuse_server *s, uint64_t clientid,
+struct openmacfuse_owner *openmacfuse_owner_get(struct openmacfuse_server *s, uint64_t clientid,
 				  const uint8_t *owner, uint32_t ownerlen,
 				  int create)
 {
-	struct nfuse_owner *ow;
+	struct openmacfuse_owner *ow;
 
 	if (ownerlen > NFS4_OPAQUE_LIMIT)
 		return NULL;
@@ -438,22 +438,22 @@ struct nfuse_owner *nfuse_owner_get(struct nfuse_server *s, uint64_t clientid,
  * replayed by seqid. Nothing is scanned while the counts are small (the local client has one
  * open-owner per user and one lock-owner per process).
  */
-void nfuse_owners_sweep(struct nfuse_server *s)
+void openmacfuse_owners_sweep(struct openmacfuse_server *s)
 {
 	time_t now = time(NULL), idle = 2 * (time_t)s->lease_time;
-	struct nfuse_owner **pp, *ow;
-	struct nfuse_lockowner **lpp, *lo;
+	struct openmacfuse_owner **pp, *ow;
+	struct openmacfuse_lockowner **lpp, *lo;
 
 	if (s->nowners > 64) {
 		for (pp = &s->owners; (ow = *pp);) {
-			struct nfuse_open *op;
+			struct openmacfuse_open *op;
 			int busy = 0;
 
 			for (op = s->opens; op && !busy; op = op->next)
 				busy = op->owner == ow;
 			if (!busy && now - ow->last_used > idle) {
 				*pp = ow->next;
-				nfuse_seq_free(&ow->seq);
+				openmacfuse_seq_free(&ow->seq);
 				free(ow);
 				s->nowners--;
 				continue;
@@ -463,7 +463,7 @@ void nfuse_owners_sweep(struct nfuse_server *s)
 	}
 	/* lock states detached from their open state and unused for two lease periods */
 	{
-		struct nfuse_lock *lk, *nx;
+		struct openmacfuse_lock *lk, *nx;
 
 		for (lk = s->locks; lk; lk = nx) {
 			nx = lk->next;
@@ -473,14 +473,14 @@ void nfuse_owners_sweep(struct nfuse_server *s)
 	}
 	if (s->nlockowners > 64) {
 		for (lpp = &s->lockowners; (lo = *lpp);) {
-			struct nfuse_lock *lk;
+			struct openmacfuse_lock *lk;
 			int busy = 0;
 
 			for (lk = s->locks; lk && !busy; lk = lk->next)
 				busy = lk->lo == lo;
 			if (!busy && now - lo->last_used > idle) {
 				*lpp = lo->next;
-				nfuse_seq_free(&lo->seq);
+				openmacfuse_seq_free(&lo->seq);
 				free(lo);
 				s->nlockowners--;
 				continue;
@@ -492,7 +492,7 @@ void nfuse_owners_sweep(struct nfuse_server *s)
 
 /* ---------- Open state ---------- */
 
-static void new_other(struct nfuse_server *s, uint8_t other[NFS4_OTHER_SIZE],
+static void new_other(struct openmacfuse_server *s, uint8_t other[NFS4_OTHER_SIZE],
 		      uint32_t tagbit)
 {
 	uint64_t n = s->next_other++;
@@ -502,11 +502,11 @@ static void new_other(struct nfuse_server *s, uint8_t other[NFS4_OTHER_SIZE],
 	put_be32(other + 8, (uint32_t)n);
 }
 
-struct nfuse_open *nfuse_open_new(struct nfuse_server *s, struct nfuse_owner *ow,
-				nfuse_ino_t ino, uint64_t befh, uint32_t access,
+struct openmacfuse_open *openmacfuse_open_new(struct openmacfuse_server *s, struct openmacfuse_owner *ow,
+				openmacfuse_ino_t ino, uint64_t befh, uint32_t access,
 				uint32_t deny)
 {
-	struct nfuse_open *op = calloc(1, sizeof(*op));
+	struct openmacfuse_open *op = calloc(1, sizeof(*op));
 
 	if (!op)
 		return NULL;
@@ -522,10 +522,10 @@ struct nfuse_open *nfuse_open_new(struct nfuse_server *s, struct nfuse_owner *ow
 	return op;
 }
 
-uint32_t nfuse_open_find(struct nfuse_server *s, const struct nfuse_stateid *sid,
-			 struct nfuse_open **out)
+uint32_t openmacfuse_open_find(struct openmacfuse_server *s, const struct openmacfuse_stateid *sid,
+			 struct openmacfuse_open **out)
 {
-	struct nfuse_open *op;
+	struct openmacfuse_open *op;
 
 	*out = NULL;
 	if (get_be32(sid->other) != s->state_boot)
@@ -538,8 +538,8 @@ uint32_t nfuse_open_find(struct nfuse_server *s, const struct nfuse_stateid *sid
 	return NFS4ERR_BAD_STATEID;
 }
 
-uint32_t nfuse_stateid_check_seq(const struct nfuse_stateid *have,
-				 const struct nfuse_stateid *want)
+uint32_t openmacfuse_stateid_check_seq(const struct openmacfuse_stateid *have,
+				 const struct openmacfuse_stateid *want)
 {
 	/*
 	 * a seqid of 0 means "the current one": no old / new check (4.0 clients do not normally
@@ -552,22 +552,22 @@ uint32_t nfuse_stateid_check_seq(const struct nfuse_stateid *have,
 	return NFS4_OK;
 }
 
-uint32_t nfuse_open_lookup(struct nfuse_server *s, const struct nfuse_stateid *sid,
-			  struct nfuse_open **out)
+uint32_t openmacfuse_open_lookup(struct openmacfuse_server *s, const struct openmacfuse_stateid *sid,
+			  struct openmacfuse_open **out)
 {
-	uint32_t rc = nfuse_open_find(s, sid, out);
+	uint32_t rc = openmacfuse_open_find(s, sid, out);
 
 	if (rc)
 		return rc;
-	rc = nfuse_stateid_check_seq(&(*out)->sid, sid);
+	rc = openmacfuse_stateid_check_seq(&(*out)->sid, sid);
 	if (rc)
 		*out = NULL;
 	return rc;
 }
 
-void nfuse_open_free(struct nfuse_server *s, struct nfuse_open *op)
+void openmacfuse_open_free(struct openmacfuse_server *s, struct openmacfuse_open *op)
 {
-	struct nfuse_open **pp;
+	struct openmacfuse_open **pp;
 
 	for (pp = &s->opens; *pp; pp = &(*pp)->next) {
 		if (*pp == op) {
@@ -580,12 +580,12 @@ void nfuse_open_free(struct nfuse_server *s, struct nfuse_open *op)
 
 /* ---------- Byte-range locks ---------- */
 
-struct nfuse_lockowner *nfuse_lockowner_get(struct nfuse_server *s,
+struct openmacfuse_lockowner *openmacfuse_lockowner_get(struct openmacfuse_server *s,
 					  uint64_t clientid,
 					  const uint8_t *owner,
 					  uint32_t ownerlen, int create)
 {
-	struct nfuse_lockowner *lo;
+	struct openmacfuse_lockowner *lo;
 
 	if (ownerlen > NFS4_OPAQUE_LIMIT)
 		return NULL;
@@ -610,10 +610,10 @@ struct nfuse_lockowner *nfuse_lockowner_get(struct nfuse_server *s,
 	return lo;
 }
 
-struct nfuse_lock *nfuse_lock_get(struct nfuse_server *s, struct nfuse_lockowner *lo,
-				struct nfuse_open *op, nfuse_ino_t ino)
+struct openmacfuse_lock *openmacfuse_lock_get(struct openmacfuse_server *s, struct openmacfuse_lockowner *lo,
+				struct openmacfuse_open *op, openmacfuse_ino_t ino)
 {
-	struct nfuse_lock *lk;
+	struct openmacfuse_lock *lk;
 
 	for (lk = s->locks; lk; lk = lk->next)
 		if (lk->lo == lo && lk->ino == ino)
@@ -631,10 +631,10 @@ struct nfuse_lock *nfuse_lock_get(struct nfuse_server *s, struct nfuse_lockowner
 	return lk;
 }
 
-uint32_t nfuse_lock_find(struct nfuse_server *s, const struct nfuse_stateid *sid,
-			 struct nfuse_lock **out)
+uint32_t openmacfuse_lock_find(struct openmacfuse_server *s, const struct openmacfuse_stateid *sid,
+			 struct openmacfuse_lock **out)
 {
-	struct nfuse_lock *lk;
+	struct openmacfuse_lock *lk;
 
 	*out = NULL;
 	if (get_be32(sid->other) != s->state_boot)
@@ -647,26 +647,26 @@ uint32_t nfuse_lock_find(struct nfuse_server *s, const struct nfuse_stateid *sid
 	return NFS4ERR_BAD_STATEID;
 }
 
-uint32_t nfuse_lock_lookup(struct nfuse_server *s, const struct nfuse_stateid *sid,
-			  struct nfuse_lock **out)
+uint32_t openmacfuse_lock_lookup(struct openmacfuse_server *s, const struct openmacfuse_stateid *sid,
+			  struct openmacfuse_lock **out)
 {
-	uint32_t rc = nfuse_lock_find(s, sid, out);
+	uint32_t rc = openmacfuse_lock_find(s, sid, out);
 
 	if (rc)
 		return rc;
-	rc = nfuse_stateid_check_seq(&(*out)->sid, sid);
+	rc = openmacfuse_stateid_check_seq(&(*out)->sid, sid);
 	if (rc)
 		*out = NULL;
 	return rc;
 }
 
-struct nfuse_lockrange *nfuse_lock_conflict(struct nfuse_server *s, nfuse_ino_t ino,
-					  struct nfuse_lockowner *me, uint64_t off,
+struct openmacfuse_lockrange *openmacfuse_lock_conflict(struct openmacfuse_server *s, openmacfuse_ino_t ino,
+					  struct openmacfuse_lockowner *me, uint64_t off,
 					  uint64_t end, uint32_t type,
-					  struct nfuse_lockowner **holder)
+					  struct openmacfuse_lockowner **holder)
 {
-	struct nfuse_lock *lk;
-	struct nfuse_lockrange *r;
+	struct openmacfuse_lock *lk;
+	struct openmacfuse_lockrange *r;
 
 	for (lk = s->locks; lk; lk = lk->next) {
 		if (lk->ino != ino || lk->lo == me)
@@ -674,7 +674,7 @@ struct nfuse_lockrange *nfuse_lock_conflict(struct nfuse_server *s, nfuse_ino_t 
 		for (r = lk->ranges; r; r = r->next) {
 			if (r->off >= end || off >= r->end)
 				continue;	/* no overlap */
-			if (r->type == NFUSE_LT_WRITE || type == NFUSE_LT_WRITE) {
+			if (r->type == OPENMACFUSE_LT_WRITE || type == OPENMACFUSE_LT_WRITE) {
 				*holder = lk->lo;
 				return r;
 			}
@@ -683,9 +683,9 @@ struct nfuse_lockrange *nfuse_lock_conflict(struct nfuse_server *s, nfuse_ino_t 
 	return NULL;
 }
 
-int nfuse_lock_remove(struct nfuse_lock *lk, uint64_t off, uint64_t end)
+int openmacfuse_lock_remove(struct openmacfuse_lock *lk, uint64_t off, uint64_t end)
 {
-	struct nfuse_lockrange **pp = &lk->ranges, *r;
+	struct openmacfuse_lockrange **pp = &lk->ranges, *r;
 
 	while ((r = *pp)) {
 		if (r->off >= end || off >= r->end) {
@@ -694,7 +694,7 @@ int nfuse_lock_remove(struct nfuse_lock *lk, uint64_t off, uint64_t end)
 		}
 		if (r->off < off && r->end > end) {
 			/* cut out of the middle: split into two ranges */
-			struct nfuse_lockrange *tail = calloc(1, sizeof(*tail));
+			struct openmacfuse_lockrange *tail = calloc(1, sizeof(*tail));
 			if (!tail)
 				return -1;
 			tail->off = end;
@@ -719,11 +719,11 @@ int nfuse_lock_remove(struct nfuse_lock *lk, uint64_t off, uint64_t end)
 	return 0;
 }
 
-int nfuse_lock_add(struct nfuse_lock *lk, uint64_t off, uint64_t end, uint32_t type)
+int openmacfuse_lock_add(struct openmacfuse_lock *lk, uint64_t off, uint64_t end, uint32_t type)
 {
-	struct nfuse_lockrange *r;
+	struct openmacfuse_lockrange *r;
 
-	if (nfuse_lock_remove(lk, off, end))
+	if (openmacfuse_lock_remove(lk, off, end))
 		return -1;
 	r = calloc(1, sizeof(*r));
 	if (!r)
@@ -736,9 +736,9 @@ int nfuse_lock_add(struct nfuse_lock *lk, uint64_t off, uint64_t end, uint32_t t
 	return 0;
 }
 
-static void lock_free(struct nfuse_server *s, struct nfuse_lock *lk)
+static void lock_free(struct openmacfuse_server *s, struct openmacfuse_lock *lk)
 {
-	struct nfuse_lock **pp;
+	struct openmacfuse_lock **pp;
 
 	for (pp = &s->locks; *pp; pp = &(*pp)->next)
 		if (*pp == lk) {
@@ -746,22 +746,22 @@ static void lock_free(struct nfuse_server *s, struct nfuse_lock *lk)
 			break;
 		}
 	while (lk->ranges) {
-		struct nfuse_lockrange *r = lk->ranges;
+		struct openmacfuse_lockrange *r = lk->ranges;
 		lk->ranges = r->next;
 		free(r);
 	}
 	free(lk);
 }
 
-void nfuse_lock_detach_open(struct nfuse_server *s, struct nfuse_open *op)
+void openmacfuse_lock_detach_open(struct openmacfuse_server *s, struct openmacfuse_open *op)
 {
-	struct nfuse_lock *lk;
+	struct openmacfuse_lock *lk;
 
 	for (lk = s->locks; lk; lk = lk->next) {
 		if (lk->open != op)
 			continue;
 		while (lk->ranges) {	/* POSIX: closing the file drops this process's locks on it */
-			struct nfuse_lockrange *r = lk->ranges;
+			struct openmacfuse_lockrange *r = lk->ranges;
 			lk->ranges = r->next;
 			free(r);
 		}
@@ -770,16 +770,16 @@ void nfuse_lock_detach_open(struct nfuse_server *s, struct nfuse_open *op)
 	}
 }
 
-struct nfuse_open *nfuse_lock_attach(struct nfuse_server *s, struct nfuse_lock *lk)
+struct openmacfuse_open *openmacfuse_lock_attach(struct openmacfuse_server *s, struct openmacfuse_lock *lk)
 {
-	struct nfuse_open *op, *best = NULL;
+	struct openmacfuse_open *op, *best = NULL;
 
 	if (lk->open)
 		return lk->open;
 	for (op = s->opens; op; op = op->next)
-		if (nfuse_lock_key(op->kind, op->ino, op->attr_id) == lk->ino &&
-		    (op->kind == NFUSE_FH_NODE || op->kind == NFUSE_FH_NAMEDATTR ||
-		     op->kind == NFUSE_FH_ADFILE) &&
+		if (openmacfuse_lock_key(op->kind, op->ino, op->attr_id) == lk->ino &&
+		    (op->kind == OPENMACFUSE_FH_NODE || op->kind == OPENMACFUSE_FH_NAMEDATTR ||
+		     op->kind == OPENMACFUSE_FH_ADFILE) &&
 		    op->owner->clientid == lk->lo->clientid &&
 		    (!best || ((op->share_access & OPEN4_SHARE_ACCESS_WRITE) &&
 			       !(best->share_access & OPEN4_SHARE_ACCESS_WRITE))))
@@ -791,12 +791,12 @@ struct nfuse_open *nfuse_lock_attach(struct nfuse_server *s, struct nfuse_lock *
 	return best;
 }
 
-uint32_t nfuse_lockowner_release(struct nfuse_server *s, uint64_t clientid,
+uint32_t openmacfuse_lockowner_release(struct openmacfuse_server *s, uint64_t clientid,
 				const uint8_t *owner, uint32_t ownerlen)
 {
-	struct nfuse_lockowner *lo = nfuse_lockowner_get(s, clientid, owner,
+	struct openmacfuse_lockowner *lo = openmacfuse_lockowner_get(s, clientid, owner,
 						       ownerlen, 0), **pp;
-	struct nfuse_lock *lk, *nx;
+	struct openmacfuse_lock *lk, *nx;
 
 	if (!lo)
 		return NFS4_OK;
@@ -813,7 +813,7 @@ uint32_t nfuse_lockowner_release(struct nfuse_server *s, uint64_t clientid,
 			*pp = lo->next;
 			break;
 		}
-	nfuse_seq_free(&lo->seq);
+	openmacfuse_seq_free(&lo->seq);
 	free(lo);
 	s->nlockowners--;
 	return NFS4_OK;
@@ -821,35 +821,35 @@ uint32_t nfuse_lockowner_release(struct nfuse_server *s, uint64_t clientid,
 
 /* ---------- Restart / teardown ---------- */
 
-static void free_all_state(struct nfuse_server *s, int release_backend)
+static void free_all_state(struct openmacfuse_server *s, int release_backend)
 {
 	while (s->locks)
 		lock_free(s, s->locks);
 	while (s->opens) {
-		struct nfuse_open *op = s->opens;
+		struct openmacfuse_open *op = s->opens;
 		s->opens = op->next;
-		if (release_backend && op->kind == NFUSE_FH_NODE &&
+		if (release_backend && op->kind == OPENMACFUSE_FH_NODE &&
 		    s->be.ops && s->be.ops->release)
 			s->be.ops->release(s->be.ctx, op->ino, op->befh);
 		free(op);
 	}
 	while (s->owners) {
-		struct nfuse_owner *ow = s->owners;
+		struct openmacfuse_owner *ow = s->owners;
 		s->owners = ow->next;
-		nfuse_seq_free(&ow->seq);
+		openmacfuse_seq_free(&ow->seq);
 		free(ow);
 	}
 	while (s->lockowners) {
-		struct nfuse_lockowner *lo = s->lockowners;
+		struct openmacfuse_lockowner *lo = s->lockowners;
 		s->lockowners = lo->next;
-		nfuse_seq_free(&lo->seq);
+		openmacfuse_seq_free(&lo->seq);
 		free(lo);
 	}
 	s->nowners = s->nlockowners = 0;
 	memset(s->clients, 0, sizeof(s->clients));
 }
 
-void nfuse_state_reboot(struct nfuse_server *s)
+void openmacfuse_state_reboot(struct openmacfuse_server *s)
 {
 	uint32_t nb;
 
@@ -863,21 +863,21 @@ void nfuse_state_reboot(struct nfuse_server *s)
 	nb = rand32();
 	/* replace the write verifier too: the client must retransmit uncommitted data */
 	memcpy(s->writeverf, &nb, 4);
-	nfuse_drc_free(&s->drc);
+	openmacfuse_drc_free(&s->drc);
 	s->reboots++;
 }
 
-void nfuse_state_free(struct nfuse_server *s)
+void openmacfuse_state_free(struct openmacfuse_server *s)
 {
 	free_all_state(s, 1);	/* files the client never closed (forced unmount etc.) are closed on its behalf here */
-	nfuse_drc_free(&s->drc);
+	openmacfuse_drc_free(&s->drc);
 }
 
 /* ---------- DRC ---------- */
 
-struct nfuse_drc_ent {
-	struct nfuse_drc_ent	*hnext;
-	struct nfuse_drc_ent	*lprev, *lnext;
+struct openmacfuse_drc_ent {
+	struct openmacfuse_drc_ent	*hnext;
+	struct openmacfuse_drc_ent	*lprev, *lnext;
 	uint32_t		xid;
 	uint32_t		len;
 	uint64_t		sum;
@@ -894,7 +894,7 @@ static uint64_t mix64(uint64_t x)
 	return x;
 }
 
-uint64_t nfuse_drc_sum(const uint8_t *msg, size_t len)
+uint64_t openmacfuse_drc_sum(const uint8_t *msg, size_t len)
 {
 	/*
 	 * skip the xid (first 4 bytes); digest the first 512 bytes of the request + the total
@@ -915,9 +915,9 @@ static uint32_t drc_slot(uint32_t xid)
 	return (uint32_t)mix64(xid) & 511;
 }
 
-static void drc_unlink(struct nfuse_drc *c, struct nfuse_drc_ent *e)
+static void drc_unlink(struct openmacfuse_drc *c, struct openmacfuse_drc_ent *e)
 {
-	struct nfuse_drc_ent **pp = &c->ht[drc_slot(e->xid)];
+	struct openmacfuse_drc_ent **pp = &c->ht[drc_slot(e->xid)];
 
 	while (*pp && *pp != e)
 		pp = &(*pp)->hnext;
@@ -935,10 +935,10 @@ static void drc_unlink(struct nfuse_drc *c, struct nfuse_drc_ent *e)
 	c->bytes -= sizeof(*e) + e->len;
 }
 
-const uint8_t *nfuse_drc_lookup(struct nfuse_drc *c, uint32_t xid, uint64_t sum,
+const uint8_t *openmacfuse_drc_lookup(struct openmacfuse_drc *c, uint32_t xid, uint64_t sum,
 				uint32_t *len)
 {
-	struct nfuse_drc_ent *e;
+	struct openmacfuse_drc_ent *e;
 
 	for (e = c->ht[drc_slot(xid)]; e; e = e->hnext)
 		if (e->xid == xid && e->sum == sum) {
@@ -949,13 +949,13 @@ const uint8_t *nfuse_drc_lookup(struct nfuse_drc *c, uint32_t xid, uint64_t sum,
 	return NULL;
 }
 
-void nfuse_drc_insert(struct nfuse_drc *c, uint32_t xid, uint64_t sum,
+void openmacfuse_drc_insert(struct openmacfuse_drc *c, uint32_t xid, uint64_t sum,
 		      const uint8_t *reply, uint32_t len)
 {
-	struct nfuse_drc_ent *e;
+	struct openmacfuse_drc_ent *e;
 	uint32_t slot = drc_slot(xid);
 
-	if (len > NFUSE_DRC_MAX_REPLY)
+	if (len > OPENMACFUSE_DRC_MAX_REPLY)
 		return;
 	for (e = c->ht[slot]; e; e = e->hnext)
 		if (e->xid == xid && e->sum == sum) {
@@ -963,8 +963,8 @@ void nfuse_drc_insert(struct nfuse_drc *c, uint32_t xid, uint64_t sum,
 			free(e);
 			break;
 		}
-	while (c->tail && (c->n >= NFUSE_DRC_MAX_ENTS ||
-			   c->bytes + sizeof(*e) + len > NFUSE_DRC_MAX_BYTES)) {
+	while (c->tail && (c->n >= OPENMACFUSE_DRC_MAX_ENTS ||
+			   c->bytes + sizeof(*e) + len > OPENMACFUSE_DRC_MAX_BYTES)) {
 		e = c->tail;
 		drc_unlink(c, e);
 		free(e);
@@ -990,10 +990,10 @@ void nfuse_drc_insert(struct nfuse_drc *c, uint32_t xid, uint64_t sum,
 	c->inserts++;
 }
 
-void nfuse_drc_free(struct nfuse_drc *c)
+void openmacfuse_drc_free(struct openmacfuse_drc *c)
 {
 	while (c->head) {
-		struct nfuse_drc_ent *e = c->head;
+		struct openmacfuse_drc_ent *e = c->head;
 		drc_unlink(c, e);
 		free(e);
 	}

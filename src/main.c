@@ -1,12 +1,12 @@
 /*
- * main.c - entry point of the prototype server: nfuse-m0
+ * main.c - entry point of the prototype server: openmacfuse-m0
  *
  * Exports an in-memory fake directory tree that mount_nfs can mount directly, for verification.
  * Usage:
- *   nfuse-m0 [-a 127.0.0.1] [-p port] [-n export-name] [-U unix-socket-path] [-v]
+ *   openmacfuse-m0 [-a 127.0.0.1] [-p port] [-n export-name] [-U unix-socket-path] [-v]
  *     -p 0 (the default) lets the system pick a port; after start-up one line is printed on stdout,
  *        "LISTEN tcp 127.0.0.1 <port>" or "LISTEN unix <path>", which scripts use to mount.
- *     -n export name, default NFUSEM0: the mount spec is 127.0.0.1:/NFUSEM0 (Finder uses the last
+ *     -n export name, default OPENMACFUSEM0: the mount spec is 127.0.0.1:/OPENMACFUSEM0 (Finder uses the last
  *        path component as the volume name);
  *        with -n "" the spec is 127.0.0.1:/.
  *
@@ -39,15 +39,15 @@ static void usage(const char *p)
 		"usage: %s [-a address] [-p port] [-n export-name] [-U unix-socket] [-v]\n", p);
 }
 
-static void print_stats(struct nfuse_server *s)
+static void print_stats(struct openmacfuse_server *s)
 {
 	int i;
 
-	fprintf(stderr, "[nfuse] exit statistics: %llu COMPOUNDs\n",
+	fprintf(stderr, "[openmacfuse] exit statistics: %llu COMPOUNDs\n",
 		(unsigned long long)s->compounds);
 	for (i = NFS4_OP_MIN; i <= NFS4_OP_MAX; i++)
 		if (s->op_count[i])
-			fprintf(stderr, "[nfuse]   %-20s %8llu  failed %llu\n",
+			fprintf(stderr, "[openmacfuse]   %-20s %8llu  failed %llu\n",
 				nfs4_op_name((uint32_t)i),
 				(unsigned long long)s->op_count[i],
 				(unsigned long long)s->op_err[i]);
@@ -55,8 +55,8 @@ static void print_stats(struct nfuse_server *s)
 
 int main(int argc, char **argv)
 {
-	static struct nfuse_server srv;
-	const char *addr = "127.0.0.1", *unix_path = NULL, *name = "NFUSEM0";
+	static struct openmacfuse_server srv;
+	const char *addr = "127.0.0.1", *unix_path = NULL, *name = "OPENMACFUSEM0";
 	uint16_t port = 0, bound = 0;
 	struct sigaction sa;
 	int ch, lfd, verbose = 0;
@@ -72,22 +72,22 @@ int main(int argc, char **argv)
 		}
 	}
 
-	nfuse_server_init(&srv, name);
+	openmacfuse_server_init(&srv, name);
 	srv.verbose = verbose;
-	if (nfuse_backend_mem_init(&srv.be) != 0) {
+	if (openmacfuse_backend_mem_init(&srv.be) != 0) {
 		fprintf(stderr, "backend initialization failed\n");
 		return 1;
 	}
 
 	if (unix_path) {
-		lfd = nfuse_listen_unix(unix_path);
+		lfd = openmacfuse_listen_unix(unix_path);
 		if (lfd < 0) {
 			fprintf(stderr, "listen on %s failed: %s\n", unix_path, strerror(errno));
 			return 1;
 		}
 		printf("LISTEN unix %s\n", unix_path);
 	} else {
-		lfd = nfuse_listen_tcp(addr, port, &bound);
+		lfd = openmacfuse_listen_tcp(addr, port, &bound);
 		if (lfd < 0) {
 			fprintf(stderr, "listen on %s:%u failed: %s\n", addr, port, strerror(errno));
 			return 1;
@@ -103,7 +103,7 @@ int main(int argc, char **argv)
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
 
-	nfuse_serve(&srv, lfd, &g_stop);	/* lfd is already closed on return */
+	openmacfuse_serve(&srv, lfd, &g_stop);	/* lfd is already closed on return */
 	if (unix_path)
 		unlink(unix_path);
 	print_stats(&srv);

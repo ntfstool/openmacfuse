@@ -1,5 +1,5 @@
 /*
- * fuse_lib.c -- independent implementation of the FUSE 2.x high-level interface (entry point of libnfuse.a)
+ * fuse_lib.c -- independent implementation of the FUSE 2.x high-level interface (entry point of libopenmacfuse.a)
  *
  * Typical call sequence of a FUSE 2.x file system:
  *   fuse_mount -> fuse_new -> fuse_set_signal_handlers -> [daemon()] ->
@@ -26,29 +26,29 @@
  *
  * Tunable environment variables (all for testing / troubleshooting only; the defaults are the
  * production behaviour):
- *   NFUSE_TRANSPORT=unix|tcp|auto  transport (default auto: unix socket from macOS 26 on,
+ *   OPENMACFUSE_TRANSPORT=unix|tcp|auto  transport (default auto: unix socket from macOS 26 on,
  *                                  127.0.0.1 TCP on older systems; falls back to TCP
  *                                  automatically when unix cannot be mounted. See transport_auto)
- *   NFUSE_LOG=<file>           append the log to a file (default: none; stderr with -o debug)
- *   NFUSE_VERBOSE=1            log every COMPOUND
- *   NFUSE_MAX_NODES=<n>        node table limit (default 32768)
- *   NFUSE_ATTR_TTL_MS=<n>      attribute cache lifetime (default 1000)
- *   NFUSE_NO_RDONLY=1          do not add rdonly when mounting (to verify that the server itself returns ROFS)
- *   NFUSE_NAMEDATTR=2          named-attribute experiment: additionally report one read-only
- *                              attribute org.nfuse.probe on every object
- *                              (named attributes are on by default and controlled by the mount option nfuse_xattr)
- *   NFUSE_MOUNT_EXTRA=<opts>   appended to the mount_nfs -o options
- *   NFUSE_NO_DRC=1                 turn off the duplicate request cache (for tests: proves the test itself is effective)
- *   NFUSE_TEST_DROP=<op,...>       test hook: each listed occurrence drops one reply of the COMPOUND containing that operation
+ *   OPENMACFUSE_LOG=<file>           append the log to a file (default: none; stderr with -o debug)
+ *   OPENMACFUSE_VERBOSE=1            log every COMPOUND
+ *   OPENMACFUSE_MAX_NODES=<n>        node table limit (default 32768)
+ *   OPENMACFUSE_ATTR_TTL_MS=<n>      attribute cache lifetime (default 1000)
+ *   OPENMACFUSE_NO_RDONLY=1          do not add rdonly when mounting (to verify that the server itself returns ROFS)
+ *   OPENMACFUSE_NAMEDATTR=2          named-attribute experiment: additionally report one read-only
+ *                              attribute org.openmacfuse.probe on every object
+ *                              (named attributes are on by default and controlled by the mount option openmacfuse_xattr)
+ *   OPENMACFUSE_MOUNT_EXTRA=<opts>   appended to the mount_nfs -o options
+ *   OPENMACFUSE_NO_DRC=1                 turn off the duplicate request cache (for tests: proves the test itself is effective)
+ *   OPENMACFUSE_TEST_DROP=<op,...>       test hook: each listed occurrence drops one reply of the COMPOUND containing that operation
  *                                  (e.g. RENAME,REMOVE,OPEN_EXCL; OPEN_EXCL = OPEN(EXCLUSIVE4)),
  *                                  forcing the client to retransmit, to verify the DRC
- *   NFUSE_TEST_DROP_MODE=close|silent  close the connection after dropping the reply (default; the client reconnects and retransmits) / just do not reply
- *   NFUSE_TEST_RAWNAMES=1          names pass through unchanged (no NFC / NFD or case-equivalent lookup); only for building test volumes
- *   NFUSE_TEST_HOOKS=1             simulate a server restart on SIGUSR2 (all state cleared, state_boot replaced,
+ *   OPENMACFUSE_TEST_DROP_MODE=close|silent  close the connection after dropping the reply (default; the client reconnects and retransmits) / just do not reply
+ *   OPENMACFUSE_TEST_RAWNAMES=1          names pass through unchanged (no NFC / NFD or case-equivalent lookup); only for building test volumes
+ *   OPENMACFUSE_TEST_HOOKS=1             simulate a server restart on SIGUSR2 (all state cleared, state_boot replaced,
  *                                  file handles remain valid), to verify that a client presenting an old stateid gets the error code the RFC specifies
  *
- * Mount options (-o, see include/nfuse.h): nfuse_xattr=streams|appledouble, nfuse_adclean=1|0,
- * nfuse_case=insensitive|sensitive, nfuse_case_scan_ms=<ms>, nfuse_nfc=1|0.
+ * Mount options (-o, see include/openmacfuse.h): openmacfuse_xattr=streams|appledouble, openmacfuse_adclean=1|0,
+ * openmacfuse_case=insensitive|sensitive, openmacfuse_case_scan_ms=<ms>, openmacfuse_nfc=1|0.
  *
  * Copyright 2026 The OpenMacFUSE Authors
  * SPDX-License-Identifier: MIT
@@ -83,7 +83,7 @@
 #include <arpa/inet.h>
 
 #include "fuse.h"
-#include "nfuse.h"
+#include "openmacfuse.h"
 #include "backend_fuse.h"
 #include "mounter.h"
 #include "names.h"
@@ -93,8 +93,8 @@
 #include "server.h"
 #include "watchdog.h"
 
-#define NFUSE_DEFAULT_RWSIZE	262144
-#define NFUSE_SOCK_MAX		103	/* sun_path is 104 bytes including the terminating NUL */
+#define OPENMACFUSE_DEFAULT_RWSIZE	262144
+#define OPENMACFUSE_SOCK_MAX		103	/* sun_path is 104 bytes including the terminating NUL */
 
 struct fuse_session {
 	struct fuse	*f;
@@ -116,11 +116,11 @@ struct fuse_chan {
 	char		from[PATH_MAX + 300];	/* mount source (the mount_nfs spec); identifies which mount table entry is ours */
 	struct fuse	*f;
 	/* Mac semantics options */
-	int		xattr_mode;		/* nfuse_xattr: 0 = appledouble, 1 = streams (named attributes, experimental), 2 = adfile (default) */
-	int		ad_clean;		/* nfuse_adclean */
-	int		case_ci;		/* nfuse_case: 1 = insensitive */
-	uint32_t	case_scan_ms;		/* nfuse_case_scan_ms */
-	int		nfc;			/* nfuse_nfc */
+	int		xattr_mode;		/* openmacfuse_xattr: 0 = appledouble, 1 = streams (named attributes, experimental), 2 = adfile (default) */
+	int		ad_clean;		/* openmacfuse_adclean */
+	int		case_ci;		/* openmacfuse_case: 1 = insensitive */
+	uint32_t	case_scan_ms;		/* openmacfuse_case_scan_ms */
+	int		nfc;			/* openmacfuse_nfc */
 	int		nobrowse;		/* nobrowse is passed to mount_nfs only when given */
 	int		nosuid, nodev, noexec;	/* passed to mount_nfs only when given (suid / dev / exec cancel them) */
 	int		case_downgraded;
@@ -131,17 +131,17 @@ struct fuse {
 	struct fuse_chan	*ch;
 	struct fuse_session	se;
 	struct fuse_context	ctx;
-	struct nfuse_server	srv;
-	struct nfuse_tp		tp;
+	struct openmacfuse_server	srv;
+	struct openmacfuse_tp		tp;
 	int			tp_ok;
 	int			wake[2];
 	volatile sig_atomic_t	exited;
-	volatile sig_atomic_t	lost;		/* nfuse_device_lost was called: the device is gone, force-unmount */
+	volatile sig_atomic_t	lost;		/* openmacfuse_device_lost was called: the device is gone, force-unmount */
 	struct timeval		t_lost;
 	int			destroyed;
 	struct timeval		t_mount;
 	size_t			pool_bytes;	/* bytes used by the buffer pool (recorded before shutdown) */
-	struct nfuse_case_scan	case_scan;	/* result of the pre-mount case scan */
+	struct openmacfuse_case_scan	case_scan;	/* result of the pre-mount case scan */
 	int			case_scanned;
 	/* Watchdog / guard process */
 	pthread_t		wd_th;
@@ -161,7 +161,7 @@ struct fuse {
 	uint64_t		mount_stuck_ns;	/* how long a request may be stuck during the mount handshake before the handshake is failed (default 5 seconds) */
 	volatile int		mount_failed_hung; /* handshake stuck; connections already taken over so that mount_nfs fails on its own */
 	int			inited;		/* init was called (destroy must then be called for clean-up even when the mount fails) */
-	const char		*end_reason;	/* why fuse_loop returned (nfuse_end_reason) */
+	const char		*end_reason;	/* why fuse_loop returned (openmacfuse_end_reason) */
 	double			mount_s;	/* duration of the mount_nfs handshake */
 	uint64_t		wd_age_max_ns;	/* age of the oldest in-flight request observed (basis for the watchdog headroom) */
 	uint64_t		wd_quiet_max_ns;/* longest stretch without device progress while a request was in flight */
@@ -183,17 +183,17 @@ static void wd_start(struct fuse *f);
 static void wd_stop(struct fuse *f);
 static void tp_setup_guard(struct fuse *f);
 static void mount_stuck(struct fuse *f, uint64_t since, const char *why);
-static struct nfuse_ext_ops g_ext;
+static struct openmacfuse_ext_ops g_ext;
 static int g_ext_set;
 static FILE *g_logf;
-static volatile int g_log_sync;		/* non-zero: fsync the log after every line (during the handshake, after the watchdog fired, NFUSE_LOG_SYNC=1) */
+static volatile int g_log_sync;		/* non-zero: fsync the log after every line (during the handshake, after the watchdog fired, OPENMACFUSE_LOG_SYNC=1) */
 static int g_log_sync_env;
 static int g_log_stderr;
 static pthread_mutex_t g_log_mu = PTHREAD_MUTEX_INITIALIZER;
 
 /* ---------- Logging ---------- */
 
-static void nfuse_log(const char *fmt, ...)
+static void openmacfuse_log(const char *fmt, ...)
 {
 	va_list ap;
 	char line[1024];
@@ -211,21 +211,21 @@ static void nfuse_log(const char *fmt, ...)
 	localtime_r(&t, &tm);
 	pthread_mutex_lock(&g_log_mu);
 	if (g_logf) {
-		fprintf(g_logf, "%02d:%02d:%02d.%03d [nfuse %d] %s\n", tm.tm_hour,
+		fprintf(g_logf, "%02d:%02d:%02d.%03d [openmacfuse %d] %s\n", tm.tm_hour,
 			tm.tm_min, tm.tm_sec, (int)(tv.tv_usec / 1000), (int)getpid(),
 			line);
 		fflush(g_logf);
 		/*
 		 * Flush to disk at once: log lines from critical moments (mount handshake, watchdog, unmount)
 		 * must reach the disk before a possible kernel panic, otherwise only the first part that had
-		 * already left the cache survives the crash. With NFUSE_LOG_SYNC=1 every line is synced
+		 * already left the cache survives the crash. With OPENMACFUSE_LOG_SYNC=1 every line is synced
 		 * (for troubleshooting).
 		 */
 		if (g_log_sync)
 			fsync(fileno(g_logf));
 	}
 	if (g_log_stderr)
-		fprintf(stderr, "[nfuse] %s\n", line);
+		fprintf(stderr, "[openmacfuse] %s\n", line);
 	pthread_mutex_unlock(&g_log_mu);
 }
 
@@ -238,13 +238,13 @@ static long env_long(const char *name, long def)
 
 static void log_open(int debug)
 {
-	const char *p = getenv("NFUSE_LOG");
+	const char *p = getenv("OPENMACFUSE_LOG");
 
 	if (p && *p && !g_logf)
 		g_logf = fopen(p, "a");
 	g_log_stderr = debug;
-	g_log_sync_env = env_long("NFUSE_LOG_SYNC", 0) != 0;
-	g_log_sync = 1;		/* sync every line until the mount handshake completes; back to NFUSE_LOG_SYNC once fuse_loop starts serving */
+	g_log_sync_env = env_long("OPENMACFUSE_LOG_SYNC", 0) != 0;
+	g_log_sync = 1;		/* sync every line until the mount handshake completes; back to OPENMACFUSE_LOG_SYNC once fuse_loop starts serving */
 }
 
 
@@ -270,7 +270,7 @@ static void chan_opt(struct fuse_chan *ch, const char *kv)
 		ch->ro = 1;
 	} else if (KEY("rw")) {
 		ch->ro = 0;
-	} else if (KEY("nfuse_xattr")) {
+	} else if (KEY("openmacfuse_xattr")) {
 		if (strcmp(val, "adfile") == 0)
 			ch->xattr_mode = 2;
 		else if (strcmp(val, "streams") == 0)
@@ -278,20 +278,20 @@ static void chan_opt(struct fuse_chan *ch, const char *kv)
 		else if (strcmp(val, "appledouble") == 0)
 			ch->xattr_mode = 0;
 		else
-			nfuse_log("nfuse_xattr=%s is not recognised (adfile | appledouble | streams), using the default adfile", val);
-	} else if (KEY("nfuse_adclean")) {
+			openmacfuse_log("openmacfuse_xattr=%s is not recognised (adfile | appledouble | streams), using the default adfile", val);
+	} else if (KEY("openmacfuse_adclean")) {
 		ch->ad_clean = strtol(val, NULL, 10) != 0;
-	} else if (KEY("nfuse_case")) {
+	} else if (KEY("openmacfuse_case")) {
 		if (strcmp(val, "insensitive") == 0)
 			ch->case_ci = 1;
 		else if (strcmp(val, "sensitive") == 0)
 			ch->case_ci = 0;
 		else
-			nfuse_log("nfuse_case=%s is not recognised (insensitive | sensitive), using the default insensitive", val);
-	} else if (KEY("nfuse_case_scan_ms")) {
+			openmacfuse_log("openmacfuse_case=%s is not recognised (insensitive | sensitive), using the default insensitive", val);
+	} else if (KEY("openmacfuse_case_scan_ms")) {
 		long v = strtol(val, NULL, 10);
 		ch->case_scan_ms = v < 0 ? 0 : v > 60000 ? 60000 : (uint32_t)v;
-	} else if (KEY("nfuse_nfc")) {
+	} else if (KEY("openmacfuse_nfc")) {
 		ch->nfc = strtol(val, NULL, 10) != 0;
 	} else if (KEY("nobrowse")) {
 		ch->nobrowse = 1;
@@ -313,7 +313,7 @@ static void chan_opt(struct fuse_chan *ch, const char *kv)
 		   KEY("noapplexattr") || KEY("acl") || KEY("big_writes")) {
 		/* Known; accepted and ignored (local: an NFS mount cannot be made a "local volume") */
 	} else if (kl) {
-		nfuse_log("ignoring unknown mount option: %.*s", (int)kl, kv);
+		openmacfuse_log("ignoring unknown mount option: %.*s", (int)kl, kv);
 	}
 #undef KEY
 }
@@ -384,7 +384,7 @@ static void new_opts_cb(void *arg, const char *s)
 
 /*
  * Remove socket directories left behind by an earlier abnormal exit (kill -9, crash): this
- * user's nfuse.* under base whose socket nobody listens on any more (connect refused) and
+ * user's openmacfuse.* under base whose socket nobody listens on any more (connect refused) and
  * whose directory is more than a minute old.
  */
 static void sweep_stale_sockdirs(const char *base, size_t bl)
@@ -403,7 +403,7 @@ static void sweep_stale_sockdirs(const char *base, size_t bl)
 		struct sockaddr_un sun;
 		int fd, r;
 
-		if (strncmp(de->d_name, "nfuse.", 6) != 0)
+		if (strncmp(de->d_name, "openmacfuse.", strlen("openmacfuse.")) != 0)
 			continue;
 		snprintf(dir, sizeof(dir), "%.*s/%s", (int)bl, base, de->d_name);
 		if (lstat(dir, &st) || !S_ISDIR(st.st_mode) || st.st_uid != getuid() ||
@@ -424,7 +424,7 @@ static void sweep_stale_sockdirs(const char *base, size_t bl)
 			continue;	/* still in use */
 		unlink(sock);
 		if (rmdir(dir) == 0)
-			nfuse_log("removed socket directory %s left behind by an earlier abnormal exit", dir);
+			openmacfuse_log("removed socket directory %s left behind by an earlier abnormal exit", dir);
 	}
 	closedir(dp);
 }
@@ -443,23 +443,23 @@ static int chan_listen_unix(struct fuse_chan *ch)
 		bl = strlen(bases[i]);
 		while (bl > 1 && bases[i][bl - 1] == '/')
 			bl--;
-		/* <base>/nfuse.XXXXXX/s must be shorter than sun_path */
-		if (bl + strlen("/nfuse.XXXXXX/s") > NFUSE_SOCK_MAX)
+		/* <base>/openmacfuse.XXXXXX/s must be shorter than sun_path */
+		if (bl + strlen("/openmacfuse.XXXXXX/s") > OPENMACFUSE_SOCK_MAX)
 			continue;
 		sweep_stale_sockdirs(bases[i], bl);
-		snprintf(tmpl, sizeof(tmpl), "%.*s/nfuse.XXXXXX", (int)bl,
+		snprintf(tmpl, sizeof(tmpl), "%.*s/openmacfuse.XXXXXX", (int)bl,
 			 bases[i]);
 		if (!mkdtemp(tmpl))	/* a directory created by mkdtemp is 0700 already */
 			continue;
 		chmod(tmpl, 0700);
 		snprintf(ch->sockdir, sizeof(ch->sockdir), "%s", tmpl);
 		snprintf(ch->sockpath, sizeof(ch->sockpath), "%s/s", tmpl);
-		ch->lfd = nfuse_listen_unix(ch->sockpath);
+		ch->lfd = openmacfuse_listen_unix(ch->sockpath);
 		if (ch->lfd >= 0) {
 			ch->is_unix = 1;
 			return 0;
 		}
-		nfuse_log("listening on unix socket %s failed: %s", ch->sockpath,
+		openmacfuse_log("listening on unix socket %s failed: %s", ch->sockpath,
 			 strerror(errno));
 		rmdir(ch->sockdir);
 		ch->sockdir[0] = ch->sockpath[0] = 0;
@@ -469,9 +469,9 @@ static int chan_listen_unix(struct fuse_chan *ch)
 
 static int chan_listen_tcp(struct fuse_chan *ch)
 {
-	ch->lfd = nfuse_listen_tcp("127.0.0.1", 0, &ch->port);
+	ch->lfd = openmacfuse_listen_tcp("127.0.0.1", 0, &ch->port);
 	if (ch->lfd < 0) {
-		nfuse_log("listening on 127.0.0.1 failed: %s", strerror(errno));
+		openmacfuse_log("listening on 127.0.0.1 failed: %s", strerror(errno));
 		return -1;
 	}
 	ch->is_unix = 0;
@@ -517,7 +517,7 @@ int fuse_version(void)
 	return FUSE_VERSION;
 }
 
-int nfuse_set_ext_ops(const struct nfuse_ext_ops *ops, size_t ops_size)
+int openmacfuse_set_ext_ops(const struct openmacfuse_ext_ops *ops, size_t ops_size)
 {
 	memset(&g_ext, 0, sizeof(g_ext));
 	if (ops)
@@ -538,7 +538,7 @@ struct fuse_chan *fuse_mount(const char *mountpoint, struct fuse_args *args)
 	if (!ch)
 		return NULL;
 	ch->lfd = -1;
-	ch->rwsize = NFUSE_DEFAULT_RWSIZE;
+	ch->rwsize = OPENMACFUSE_DEFAULT_RWSIZE;
 	/*
 	 * Default adfile: the client keeps the system default nonamedattr (reads and writes `._X` as
 	 * before) and the server presents `._X` virtually, backed by the extended attributes of X
@@ -555,17 +555,17 @@ struct fuse_chan *fuse_mount(const char *mountpoint, struct fuse_args *args)
 	parse_args(args, chan_opts_cb, ch);
 	log_open(ch->debug);
 	if (!realpath(mountpoint, ch->mnt)) {
-		nfuse_log("mount point %s is not usable: %s", mountpoint, strerror(errno));
+		openmacfuse_log("mount point %s is not usable: %s", mountpoint, strerror(errno));
 		free(ch);
 		return NULL;
 	}
-	/* Export name: Finder uses the last component of the mount path as the volume name; it must not contain '/', and an empty one becomes nfuse */
+	/* Export name: Finder uses the last component of the mount path as the volume name; it must not contain '/', and an empty one becomes "openmacfuse" */
 	if (!ch->volname[0])
-		snprintf(ch->volname, sizeof(ch->volname), "nfuse");
+		snprintf(ch->volname, sizeof(ch->volname), "openmacfuse");
 	for (p = ch->volname; *p; p++)
 		if (*p == '/')
 			*p = '_';
-	tr = getenv("NFUSE_TRANSPORT");
+	tr = getenv("OPENMACFUSE_TRANSPORT");
 	ch->want_tcp = tr && *tr && strcmp(tr, "auto") != 0 ? strcmp(tr, "tcp") == 0 :
 		       transport_auto_tcp();
 	if (ch->want_tcp ? chan_listen_tcp(ch) :
@@ -575,15 +575,15 @@ struct fuse_chan *fuse_mount(const char *mountpoint, struct fuse_args *args)
 	}
 	{
 		/* The guard process of the previous driver on this mount point is still cleaning up (a forced unmount takes about 2 seconds): wait for it before mounting, see watchdog.h */
-		long wms = env_long("NFUSE_GUARD_WAIT_MS", 10000);
-		int w = nfuse_guard_wait(ch->mnt, (int)wms);
+		long wms = env_long("OPENMACFUSE_GUARD_WAIT_MS", 10000);
+		int w = openmacfuse_guard_wait(ch->mnt, (int)wms);
 
 		if (w < 0)
-			nfuse_log("the previous guard process on mount point %s has not finished cleaning up after %ld ms, continuing anyway", ch->mnt, wms);
+			openmacfuse_log("the previous guard process on mount point %s has not finished cleaning up after %ld ms, continuing anyway", ch->mnt, wms);
 		else if (w > 0)
-			nfuse_log("waited for the previous guard process on the same mount point to finish cleaning up: %d ms", w);
+			openmacfuse_log("waited for the previous guard process on the same mount point to finish cleaning up: %d ms", w);
 	}
-	nfuse_log("fuse_mount: mount point %s, volume name %s, rwsize %u, listening on %s%s, mount flags [%s%s%s%s]",
+	openmacfuse_log("fuse_mount: mount point %s, volume name %s, rwsize %u, listening on %s%s, mount flags [%s%s%s%s]",
 		 ch->mnt, ch->volname, ch->rwsize, ch->is_unix ? "unix " : "tcp ",
 		 ch->is_unix ? ch->sockpath : "127.0.0.1", ch->ro ? " ro" : "", ch->nosuid ? " nosuid" : "",
 		 ch->nodev ? " nodev" : "", ch->noexec ? " noexec" : "");
@@ -602,7 +602,7 @@ static void fuse_signal_handler(int sig)
 	}
 }
 
-/* Test hook: SIGUSR2 -> simulate a server restart before the next COMPOUND (only installed with NFUSE_TEST_HOOKS=1) */
+/* Test hook: SIGUSR2 -> simulate a server restart before the next COMPOUND (only installed with OPENMACFUSE_TEST_HOOKS=1) */
 static void test_reboot_handler(int sig)
 {
 	(void)sig;
@@ -612,10 +612,10 @@ static void test_reboot_handler(int sig)
 
 static void test_hooks_init(struct fuse *f)
 {
-	const char *drop = getenv("NFUSE_TEST_DROP");
-	const char *mode = getenv("NFUSE_TEST_DROP_MODE");
+	const char *drop = getenv("OPENMACFUSE_TEST_DROP");
+	const char *mode = getenv("OPENMACFUSE_TEST_DROP_MODE");
 
-	f->srv.no_drc = env_long("NFUSE_NO_DRC", 0) != 0;
+	f->srv.no_drc = env_long("OPENMACFUSE_NO_DRC", 0) != 0;
 	if (drop && *drop) {
 		char buf[256], *tok, *save = NULL;
 
@@ -626,26 +626,26 @@ static void test_hooks_init(struct fuse *f)
 			if (op > 0)
 				f->srv.test_drop[op]++;
 			else
-				nfuse_log("NFUSE_TEST_DROP: unknown operation %s", tok);
+				openmacfuse_log("OPENMACFUSE_TEST_DROP: unknown operation %s", tok);
 		}
 		f->srv.test_drop_close = !(mode && strcmp(mode, "silent") == 0);
-		nfuse_log("test hook: dropping replies of %s (%s)", drop,
+		openmacfuse_log("test hook: dropping replies of %s (%s)", drop,
 			  f->srv.test_drop_close ? "connection closed after the drop" : "just not replying");
 	}
-	if (env_long("NFUSE_TEST_HOOKS", 0)) {
+	if (env_long("OPENMACFUSE_TEST_HOOKS", 0)) {
 		struct sigaction sa;
 
 		memset(&sa, 0, sizeof(sa));
 		sa.sa_handler = test_reboot_handler;
 		sigemptyset(&sa.sa_mask);
 		sigaction(SIGUSR2, &sa, NULL);
-		nfuse_log("test hook: SIGUSR2 simulates a server restart");
+		openmacfuse_log("test hook: SIGUSR2 simulates a server restart");
 	}
 	if (f->srv.no_drc)
-		nfuse_log("test: DRC disabled");
+		openmacfuse_log("test: DRC disabled");
 	{
-		const char *h = getenv("NFUSE_TEST_HANG");
-		const char *st = getenv("NFUSE_TEST_STALL");
+		const char *h = getenv("OPENMACFUSE_TEST_HANG");
+		const char *st = getenv("OPENMACFUSE_TEST_STALL");
 
 		if (h && *h) {
 			char buf[64], *colon;
@@ -661,17 +661,17 @@ static void test_hooks_init(struct fuse *f)
 				f->srv.test_hang_skip = colon ? (uint32_t)strtoul(colon, NULL, 10) : 0;
 				if (f->srv.test_hang_skip)
 					f->srv.test_hang_skip--;
-				f->srv.test_hang_ms = (uint32_t)env_long("NFUSE_TEST_HANG_MS", 0);
-				f->srv.test_hang_progress = env_long("NFUSE_TEST_HANG_PROGRESS", 0) != 0;
-				nfuse_log("test hook: occurrence %u of %s hangs (%s%s)", f->srv.test_hang_skip + 1, buf,
+				f->srv.test_hang_ms = (uint32_t)env_long("OPENMACFUSE_TEST_HANG_MS", 0);
+				f->srv.test_hang_progress = env_long("OPENMACFUSE_TEST_HANG_PROGRESS", 0) != 0;
+				openmacfuse_log("test hook: occurrence %u of %s hangs (%s%s)", f->srv.test_hang_skip + 1, buf,
 					  f->srv.test_hang_ms ? "time-limited" : "never returns",
 					  f->srv.test_hang_progress ? ", pretending the backend makes progress meanwhile" : "");
 			} else
-				nfuse_log("NFUSE_TEST_HANG: unknown operation %s", buf);
+				openmacfuse_log("OPENMACFUSE_TEST_HANG: unknown operation %s", buf);
 		}
 		if (st && *st) {
 			f->srv.test_stall_path = st;
-			nfuse_log("test hook: server threads stall while %s exists", st);
+			openmacfuse_log("test hook: server threads stall while %s exists", st);
 		}
 	}
 }
@@ -681,8 +681,8 @@ static void mount_args(struct fuse *f, char *spec, size_t sl, char *opts,
 		       size_t ol)
 {
 	struct fuse_chan *ch = f->ch;
-	const char *extra = getenv("NFUSE_MOUNT_EXTRA");
-	int rdonly = env_long("NFUSE_NO_RDONLY", 0) == 0;
+	const char *extra = getenv("OPENMACFUSE_MOUNT_EXTRA");
+	int rdonly = env_long("OPENMACFUSE_NO_RDONLY", 0) == 0;
 
 	if (ch->is_unix) {
 		/* Local socket: the host part is the absolute path in angle brackets; nocallback is mandatory */
@@ -748,15 +748,15 @@ static int do_mount(struct fuse *f, char *err, size_t errlen)
 	struct timeval t0, t1;
 	int rc;
 
-	long tmo = env_long("NFUSE_MOUNT_TIMEOUT_S", 30);
+	long tmo = env_long("OPENMACFUSE_MOUNT_TIMEOUT_S", 30);
 
 	mount_args(f, spec, sizeof(spec), opts, sizeof(opts));
 	snprintf(f->ch->from, sizeof(f->ch->from), "%s", spec);
-	nfuse_log("mount_nfs -o %s '%s' '%s'", opts, spec, f->ch->mnt);
+	openmacfuse_log("mount_nfs -o %s '%s' '%s'", opts, spec, f->ch->mnt);
 	gettimeofday(&t0, NULL);
 	f->mounting = 1;
 	f->trusted_given = 0;
-	rc = nfuse_run_mount_nfs(spec, opts, f->ch->mnt, tmo > 0 ? (int)tmo : 30, err, errlen);
+	rc = openmacfuse_run_mount_nfs(spec, opts, f->ch->mnt, tmo > 0 ? (int)tmo : 30, err, errlen);
 	f->mounting = 0;
 	gettimeofday(&t1, NULL);
 	if (rc == -2) {
@@ -767,17 +767,17 @@ static int do_mount(struct fuse *f, char *err, size_t errlen)
 		 * requests with IO and let mount_nfs fail and return on its own; the failure path of
 		 * fuse_new then exits (24).
 		 */
-		nfuse_log("%s: handled like a stuck handshake (taking over the connections and answering IO; mount_nfs is not killed, nothing is force-unmounted)", err);
+		openmacfuse_log("%s: handled like a stuck handshake (taking over the connections and answering IO; mount_nfs is not killed, nothing is force-unmounted)", err);
 		if (!f->mount_failed_hung)
 			mount_stuck(f, 0, "mount_timeout");
 		rc = -1;
 	}
-	if (rc == 0 && !nfuse_is_nfs_mounted(f->ch->mnt, f->ch->from)) {
+	if (rc == 0 && !openmacfuse_is_nfs_mounted(f->ch->mnt, f->ch->from)) {
 		snprintf(err, errlen, "mount_nfs reported success but the mount is not in the mount table");
 		rc = -1;
 	}
 	f->mount_s = (double)(t1.tv_sec - t0.tv_sec) + (t1.tv_usec - t0.tv_usec) / 1e6;
-	nfuse_log("mount_nfs %s, took %.3f s%s%s", rc == 0 ? "succeeded" : "failed",
+	openmacfuse_log("mount_nfs %s, took %.3f s%s%s", rc == 0 ? "succeeded" : "failed",
 		 (double)(t1.tv_sec - t0.tv_sec) + (t1.tv_usec - t0.tv_usec) / 1e6,
 		 rc ? ": " : "", rc ? err : "");
 	f->t_mount = t1;
@@ -789,7 +789,7 @@ struct fuse *fuse_new(struct fuse_chan *ch, struct fuse_args *args,
 		      void *user_data)
 {
 	struct fuse *f;
-	struct nfuse_bf_config cfg;
+	struct openmacfuse_bf_config cfg;
 	struct fuse_conn_info conn;
 	char err[1024];
 	int debug = 0, r;
@@ -829,31 +829,31 @@ struct fuse *fuse_new(struct fuse_chan *ch, struct fuse_args *args,
 		f->inited = 1;
 	}
 
-	nfuse_fork_warmup();		/* the driver may daemon() next: CF types the child needs (names, IOKit results) are initialised before the fork */
-	nfuse_server_init(&f->srv, ch->volname);
+	openmacfuse_fork_warmup();		/* the driver may daemon() next: CF types the child needs (names, IOKit results) are initialised before the fork */
+	openmacfuse_server_init(&f->srv, ch->volname);
 	f->srv.rwsize = ch->rwsize;
-	f->srv.verbose = env_long("NFUSE_VERBOSE", 0) != 0;
-	f->srv.log = (g_logf || g_log_stderr) ? nfuse_log : NULL;
-	f->srv.named_attr = ch->xattr_mode == 1 || env_long("NFUSE_NAMEDATTR", 0) != 0;
+	f->srv.verbose = env_long("OPENMACFUSE_VERBOSE", 0) != 0;
+	f->srv.log = (g_logf || g_log_stderr) ? openmacfuse_log : NULL;
+	f->srv.named_attr = ch->xattr_mode == 1 || env_long("OPENMACFUSE_NAMEDATTR", 0) != 0;
 	f->srv.adfile = ch->xattr_mode == 2 && !f->srv.named_attr;
 
 	memset(&cfg, 0, sizeof(cfg));
-	cfg.max_nodes = (size_t)env_long("NFUSE_MAX_NODES", 0);
-	cfg.attr_ttl_ms = (uint32_t)env_long("NFUSE_ATTR_TTL_MS", 0);
+	cfg.max_nodes = (size_t)env_long("OPENMACFUSE_MAX_NODES", 0);
+	cfg.attr_ttl_ms = (uint32_t)env_long("OPENMACFUSE_ATTR_TTL_MS", 0);
 	cfg.log = f->srv.log;
-	cfg.fake_xattr = env_long("NFUSE_NAMEDATTR", 0) >= 2;
+	cfg.fake_xattr = env_long("OPENMACFUSE_NAMEDATTR", 0) >= 2;
 	cfg.namedattr = f->srv.named_attr;
 	cfg.adtrans = f->srv.adfile;
 	cfg.ad_clean = ch->ad_clean;
 	cfg.case_insensitive = ch->case_ci;
 	cfg.nfc = ch->nfc;
 	cfg.ext = g_ext_set ? &g_ext : NULL;
-	cfg.raw_names = env_long("NFUSE_TEST_RAWNAMES", 0) != 0;
+	cfg.raw_names = env_long("OPENMACFUSE_TEST_RAWNAMES", 0) != 0;
 	if (cfg.raw_names)
-		nfuse_log("test hook: names pass through unchanged (no equivalence lookup / NFC)");
-	r = nfuse_backend_fuse_init(&f->srv.be, &f->op, &f->ctx, &cfg);
+		openmacfuse_log("test hook: names pass through unchanged (no equivalence lookup / NFC)");
+	r = openmacfuse_backend_fuse_init(&f->srv.be, &f->op, &f->ctx, &cfg);
 	if (r) {
-		nfuse_log("backend initialisation failed (getattr(\"/\")): %s", strerror(-r));
+		openmacfuse_log("backend initialisation failed (getattr(\"/\")): %s", strerror(-r));
 		goto fail;
 	}
 	/*
@@ -864,24 +864,24 @@ struct fuse *fuse_new(struct fuse_chan *ch, struct fuse_args *args,
 	 * opened (see real_name in backend_fuse.c).
 	 */
 	if (ch->case_ci && ch->case_scan_ms) {
-		struct nfuse_case_scan cs;
+		struct openmacfuse_case_scan cs;
 
-		nfuse_backend_fuse_case_scan(&f->srv.be, ch->case_scan_ms, &cs);
+		openmacfuse_backend_fuse_case_scan(&f->srv.be, ch->case_scan_ms, &cs);
 		f->case_scan = cs;
 		f->case_scanned = 1;
 		if (cs.conflicts) {
 			ch->case_ci = 0;
 			ch->case_downgraded = 1;
-			nfuse_backend_fuse_set_case(&f->srv.be, 0);
+			openmacfuse_backend_fuse_set_case(&f->srv.be, 0);
 		}
-		nfuse_log("case scan: %s, %u directories %llu entries, took %.1f ms, %u pairs differing only in case, %u pairs differing only in normalisation%s%s -> mounting %s",
+		openmacfuse_log("case scan: %s, %u directories %llu entries, took %.1f ms, %u pairs differing only in case, %u pairs differing only in normalisation%s%s -> mounting %s",
 			  cs.complete ? "whole volume scanned" : "time limit reached before finishing", cs.dirs,
 			  (unsigned long long)cs.entries, cs.ms, cs.conflicts, cs.normdups,
 			  cs.conflicts ? ", e.g. " : "", cs.conflicts ? cs.sample : "",
 			  ch->case_ci ? "case-insensitive" : "case-sensitive (automatic downgrade)");
 	}
 	f->srv.case_insensitive = ch->case_ci;
-	nfuse_log("options: nfuse_xattr=%s nfuse_adclean=%d nfuse_case=%s nfuse_nfc=%d ext_ops=%s%s%s",
+	openmacfuse_log("options: openmacfuse_xattr=%s openmacfuse_adclean=%d openmacfuse_case=%s openmacfuse_nfc=%d ext_ops=%s%s%s",
 		  f->srv.named_attr ? "streams (experimental)" : f->srv.adfile ? "adfile" : "appledouble", ch->ad_clean,
 		  ch->case_ci ? "insensitive" : "sensitive", ch->nfc,
 		  g_ext_set ? "yes" : "no",
@@ -900,38 +900,38 @@ struct fuse *fuse_new(struct fuse_chan *ch, struct fuse_args *args,
 	fcntl(f->wake[1], F_SETFD, FD_CLOEXEC);
 	fcntl(ch->lfd, F_SETFD, FD_CLOEXEC);
 
-	nfuse_tp_init(&f->tp, &f->srv, ch->lfd, f->wake[1]);
+	openmacfuse_tp_init(&f->tp, &f->srv, ch->lfd, f->wake[1]);
 	f->tp_ok = 1;
 	tp_setup_guard(f);
 	wd_config(f);
 	wd_start(f);	/* watch during the mount handshake already (when the server thread hangs, mount_nfs hangs too) */
-	if (nfuse_tp_resume(&f->tp))
+	if (openmacfuse_tp_resume(&f->tp))
 		goto fail;
 	if (do_mount(f, err, sizeof(err))) {
 		if (!ch->is_unix || ch->want_tcp || f->mount_failed_hung)
 			goto fail_mount;
 		/* The local socket could not be mounted (unsupported on older systems etc.): retry once over 127.0.0.1 TCP */
-		nfuse_log("mounting over the unix socket failed, retrying over TCP");
-		nfuse_tp_shutdown(&f->tp);	/* this closes the unix listening socket */
+		openmacfuse_log("mounting over the unix socket failed, retrying over TCP");
+		openmacfuse_tp_shutdown(&f->tp);	/* this closes the unix listening socket */
 		chan_cleanup_sock(ch);
 		if (chan_listen_tcp(ch))
 			goto fail_mount;
 		fcntl(ch->lfd, F_SETFD, FD_CLOEXEC);
-		nfuse_tp_init(&f->tp, &f->srv, ch->lfd, f->wake[1]);
+		openmacfuse_tp_init(&f->tp, &f->srv, ch->lfd, f->wake[1]);
 		tp_setup_guard(f);
-		if (nfuse_tp_resume(&f->tp) || do_mount(f, err, sizeof(err)))
+		if (openmacfuse_tp_resume(&f->tp) || do_mount(f, err, sizeof(err)))
 			goto fail_mount;
 	}
 	ch->mounted = 1;
 	ch->f = f;
 	/* Park at a request boundary: the driver may daemon() next, fuse_loop starts the threads again */
-	nfuse_tp_pause(&f->tp);
+	openmacfuse_tp_pause(&f->tp);
 	wd_stop(f);
 	return f;
 
 fail_mount:
-	syslog(LOG_ERR, "nfuse: mount_nfs failed: %s", err);
-	fprintf(stderr, "nfuse: mount failed: %s\n", err);
+	syslog(LOG_ERR, "openmacfuse: mount_nfs failed: %s", err);
+	fprintf(stderr, "openmacfuse: mount failed: %s\n", err);
 	if (f->mount_failed_hung) {
 		/*
 		 * The handshake got stuck and mount_nfs has been made to fail: the stuck thread holds the
@@ -945,19 +945,19 @@ fail_mount:
 		 * mount_nfs fails and exits on its own within about 20 seconds and leaves no mount behind.
 		 * Exit code 24, the same outcome as the watchdog.
 		 */
-		int done = nfuse_mount_nfs_wait(3000);
-		int still = done && f->ch->from[0] && nfuse_is_nfs_mounted(f->ch->mnt, f->ch->from);
+		int done = openmacfuse_mount_nfs_wait(3000);
+		int still = done && f->ch->from[0] && openmacfuse_is_nfs_mounted(f->ch->mnt, f->ch->from);
 
 		if (still)
-			nfuse_unmount_force(f->ch->mnt, f->ch->from, nfuse_log);
-		nfuse_log("mount handshake stuck, mount_nfs %s (%s); mount table: %s; exit code %d",
+			openmacfuse_unmount_force(f->ch->mnt, f->ch->from, openmacfuse_log);
+		openmacfuse_log("mount handshake stuck, mount_nfs %s (%s); mount table: %s; exit code %d",
 			  done ? "has failed and returned" : "is still running (not killed, left to fail on its own)", err,
-			  !done ? "not checked, not touched" : still ? "leftover entry, force-unmounted" : "no such mount", NFUSE_EXIT_WATCHDOG);
-		_exit(NFUSE_EXIT_WATCHDOG);
+			  !done ? "not checked, not touched" : still ? "leftover entry, force-unmounted" : "no such mount", OPENMACFUSE_EXIT_WATCHDOG);
+		_exit(OPENMACFUSE_EXIT_WATCHDOG);
 	}
 fail:
 	if (f->tp_ok) {
-		nfuse_tp_shutdown(&f->tp);	/* this blocks when the server thread is stuck in the backend: the watchdog is still on and will force an exit in time */
+		openmacfuse_tp_shutdown(&f->tp);	/* this blocks when the server thread is stuck in the backend: the watchdog is still on and will force an exit in time */
 		ch->lfd = -1;
 	}
 	if (f->inited && f->op.destroy) {
@@ -968,13 +968,13 @@ fail:
 		 * thread is stopped; the watchdog is still watching (destroy may touch the device).
 		 */
 		f->extra_name = "destroy";
-		f->extra_t0 = nfuse_uptime_ns();
+		f->extra_t0 = openmacfuse_uptime_ns();
 		f->op.destroy(f->ctx.private_data);
 		f->extra_t0 = 0;
 		f->inited = 0;
 	}
 	wd_stop(f);
-	nfuse_backend_fuse_free(&f->srv.be);
+	openmacfuse_backend_fuse_free(&f->srv.be);
 	if (f->wake[0] >= 0)
 		close(f->wake[0]);
 	if (f->wake[1] >= 0)
@@ -1075,7 +1075,7 @@ static int tcp_accept_check(void *arg, int fd, int *trusted)
 	struct fuse *f = arg;
 	struct sockaddr_in peer, me;
 	socklen_t pl = sizeof(peer), ml = sizeof(me);
-	uint64_t t0 = nfuse_uptime_ns();
+	uint64_t t0 = openmacfuse_uptime_ns();
 	pid_t owner;
 	int seen = 0;
 	double ms;
@@ -1083,24 +1083,24 @@ static int tcp_accept_check(void *arg, int fd, int *trusted)
 	*trusted = 0;
 	if (getpeername(fd, (struct sockaddr *)&peer, &pl) || getsockname(fd, (struct sockaddr *)&me, &ml) ||
 	    peer.sin_family != AF_INET || peer.sin_addr.s_addr != htonl(INADDR_LOOPBACK)) {
-		nfuse_log("local security: connection rejected (peer address unavailable or not 127.0.0.1)");
+		openmacfuse_log("local security: connection rejected (peer address unavailable or not 127.0.0.1)");
 		f->guard_rejected++;
 		return -1;
 	}
-	/* Test hook: NFUSE_TEST_GUARD_NOSCAN=1 skips the process scan (simulates "a process we cannot see", to verify the second gate on its own) */
-	owner = env_long("NFUSE_TEST_GUARD_NOSCAN", 0) ? 0 :
+	/* Test hook: OPENMACFUSE_TEST_GUARD_NOSCAN=1 skips the process scan (simulates "a process we cannot see", to verify the second gate on its own) */
+	owner = env_long("OPENMACFUSE_TEST_GUARD_NOSCAN", 0) ? 0 :
 		tcp_peer_owner(ntohs(peer.sin_port), ntohs(me.sin_port), &seen);
-	ms = (nfuse_uptime_ns() - t0) / 1e6;
+	ms = (openmacfuse_uptime_ns() - t0) / 1e6;
 	if (ms > f->guard_scan_ms_max)
 		f->guard_scan_ms_max = ms;
 	/* mount_nfs (a child we started ourselves; it may connect right after posix_spawn returns, before its pid has been recorded) is merely untrusted, not rejected */
-	if (owner > 0 && owner != nfuse_mount_pid && !owner_is_child(owner)) {
+	if (owner > 0 && owner != openmacfuse_mount_pid && !owner_is_child(owner)) {
 		char name[64] = "?";
 
 		proc_name(owner, name, sizeof(name));
-		nfuse_log("local security: rejected local process %d (%s) connecting from port %u -- only the system NFS client is accepted (scanned %d processes, %.1f ms)",
+		openmacfuse_log("local security: rejected local process %d (%s) connecting from port %u -- only the system NFS client is accepted (scanned %d processes, %.1f ms)",
 			  (int)owner, name, ntohs(peer.sin_port), seen, ms);
-		syslog(LOG_WARNING, "nfuse: rejected NFS connection from local process %d (%s)", (int)owner, name);
+		syslog(LOG_WARNING, "openmacfuse: rejected NFS connection from local process %d (%s)", (int)owner, name);
 		f->guard_rejected++;
 		return -1;
 	}
@@ -1110,7 +1110,7 @@ static int tcp_accept_check(void *arg, int fd, int *trusted)
 	}
 	if (!*trusted)
 		f->guard_untrusted++;
-	nfuse_log("local security: connection accepted (peer port %u, %s, scanned %d processes in %.1f ms%s)", ntohs(peer.sin_port),
+	openmacfuse_log("local security: connection accepted (peer port %u, %s, scanned %d processes in %.1f ms%s)", ntohs(peer.sin_port),
 		  owner ? "connection of the mount_nfs started by this process, untrusted" : *trusted ? "kernel connection of the mount handshake, trusted" :
 		  "kernel connection (or a process we cannot see), trusted only after presenting a valid file handle",
 		  seen, ms, getuid() ? "; non-root only sees this user's processes" : "");
@@ -1119,7 +1119,7 @@ static int tcp_accept_check(void *arg, int fd, int *trusted)
 
 static void tp_setup_guard(struct fuse *f)
 {
-	f->tcp_guard = !f->ch->is_unix && env_long("NFUSE_TCP_GUARD", 1) != 0;
+	f->tcp_guard = !f->ch->is_unix && env_long("OPENMACFUSE_TCP_GUARD", 1) != 0;
 	if (f->tcp_guard) {
 		f->tp.accept_hook = tcp_accept_check;
 		f->tp.accept_arg = f;
@@ -1139,7 +1139,7 @@ static void tp_setup_guard(struct fuse *f)
  */
 static void wd_fire(struct fuse *f, const char *why, uint64_t since, uint64_t quiet)
 {
-	uint64_t now = nfuse_uptime_ns(), t0;
+	uint64_t now = openmacfuse_uptime_ns(), t0;
 	uint32_t op = f->srv.cur_op;
 	const char *opn = op ? nfs4_op_name(op) : (f->extra_t0 && f->extra_name ? f->extra_name : "-");
 	double secs = since ? (now - since) / 1e9 : 0, qs = quiet / 1e9;
@@ -1150,35 +1150,35 @@ static void wd_fire(struct fuse *f, const char *why, uint64_t since, uint64_t qu
 	f->srv.dev_lost = 1;
 	f->wd_fired_ns = now;
 	g_log_sync = 1;
-	nfuse_log("watchdog: %s -- operation %s has been running for %.1f s with no backend progress at all for %.1f s (threshold %.0f s%s). All further requests return IO; force-unmounting, then exiting",
+	openmacfuse_log("watchdog: %s -- operation %s has been running for %.1f s with no backend progress at all for %.1f s (threshold %.0f s%s). All further requests return IO; force-unmounting, then exiting",
 		  why, opn, secs, qs, f->wd_ns / 1e9,
 		  strcmp(why, "too_long") == 0 ? ", absolute limit" : "");
-	syslog(LOG_ERR, "nfuse: watchdog: %s, op %s stuck %.1fs (no backend progress %.1fs); force unmounting %s",
+	syslog(LOG_ERR, "openmacfuse: watchdog: %s, op %s stuck %.1fs (no backend progress %.1fs); force unmounting %s",
 	       why, opn, secs, qs, ch ? ch->mnt : "?");
 	if (g_ext_set && g_ext.watchdog)
 		code = g_ext.watchdog(why, opn, secs);
 	if (code <= 0)
-		code = NFUSE_EXIT_WATCHDOG;
-	if (f->mounting || nfuse_mount_pid > 0) {
+		code = OPENMACFUSE_EXIT_WATCHDOG;
+	if (f->mounting || openmacfuse_mount_pid > 0) {
 		/* Handshake in progress: do not kill mount_nfs, do not touch the mount point; take over the connections, answer IO, then exit; mount_nfs fails and returns on its own */
-		nfuse_log("watchdog: mount handshake in progress (mount_nfs pid %d still running) -- not killing it, not force-unmounting; taking over the connections, then exiting",
-			  (int)nfuse_mount_pid);
+		openmacfuse_log("watchdog: mount handshake in progress (mount_nfs pid %d still running) -- not killing it, not force-unmounting; taking over the connections, then exiting",
+			  (int)openmacfuse_mount_pid);
 	}
 	/* Stuck connections are handed to the takeover thread, which answers IO (the client then has no in-flight requests and the forced unmount does not have to wait, see server.c) */
 	{
-		int k = nfuse_tp_takeover(&f->tp);
+		int k = openmacfuse_tp_takeover(&f->tp);
 
 		if (k)
-			nfuse_log("watchdog: took over %d stuck connections; in-flight and later requests return IO", k);
+			openmacfuse_log("watchdog: took over %d stuck connections; in-flight and later requests return IO", k);
 	}
-	t0 = nfuse_uptime_ns();
-	mounted = !f->mounting && nfuse_mount_pid <= 0 && ch && ch->from[0] &&
-		  nfuse_is_nfs_mounted(ch->mnt, ch->from);
+	t0 = openmacfuse_uptime_ns();
+	mounted = !f->mounting && openmacfuse_mount_pid <= 0 && ch && ch->from[0] &&
+		  openmacfuse_is_nfs_mounted(ch->mnt, ch->from);
 	if (mounted)
-		rc = nfuse_unmount_force(ch->mnt, ch->from, nfuse_log);
-	nfuse_log("watchdog: %s%s, took %.3f s; %.3f s since the hang was declared; exit code %d",
+		rc = openmacfuse_unmount_force(ch->mnt, ch->from, openmacfuse_log);
+	openmacfuse_log("watchdog: %s%s, took %.3f s; %.3f s since the hang was declared; exit code %d",
 		  mounted ? "forced unmount" : "mount point was already gone", mounted ? (rc == 0 ? " succeeded" : " failed") : "",
-		  (nfuse_uptime_ns() - t0) / 1e9, (nfuse_uptime_ns() - now) / 1e9, code);
+		  (openmacfuse_uptime_ns() - t0) / 1e9, (openmacfuse_uptime_ns() - now) / 1e9, code);
 	_exit(code);
 }
 
@@ -1186,7 +1186,7 @@ static void wd_fire(struct fuse *f, const char *why, uint64_t since, uint64_t qu
 static void mount_stuck(struct fuse *f, uint64_t since, const char *why)
 {
 	uint32_t op = f->srv.cur_op;
-	double secs = since ? (nfuse_uptime_ns() - since) / 1e9 : 0;
+	double secs = since ? (openmacfuse_uptime_ns() - since) / 1e9 : 0;
 	int k;
 
 	if (f->mount_failed_hung)
@@ -1195,10 +1195,10 @@ static void mount_stuck(struct fuse *f, uint64_t since, const char *why)
 	f->srv.dev_lost = 1;
 	f->mount_failed_hung = 1;
 	g_log_sync = 1;
-	k = nfuse_tp_takeover(&f->tp);
-	nfuse_log("mount handshake stuck (%s): %s has had no reply for %.1f s -- taking over %d connections and answering IO so that mount_nfs reports the error and returns on its own (not killing it, not force-unmounting), then exiting",
+	k = openmacfuse_tp_takeover(&f->tp);
+	openmacfuse_log("mount handshake stuck (%s): %s has had no reply for %.1f s -- taking over %d connections and answering IO so that mount_nfs reports the error and returns on its own (not killing it, not force-unmounting), then exiting",
 		  why, op ? nfs4_op_name(op) : "-", secs, k);
-	syslog(LOG_ERR, "nfuse: mount handshake stuck (%s, %s %.1fs), failing the mount", why,
+	syslog(LOG_ERR, "openmacfuse: mount handshake stuck (%s, %s %.1fs), failing the mount", why,
 	       op ? nfs4_op_name(op) : "-", secs);
 	if (g_ext_set && g_ext.watchdog)
 		(void)g_ext.watchdog(why, op ? nfs4_op_name(op) : "-", secs);
@@ -1216,13 +1216,13 @@ static uint64_t wd_progress(struct fuse *f)
 static void *wd_thread(void *arg)
 {
 	struct fuse *f = arg;
-	uint64_t pv = wd_progress(f), pt = nfuse_uptime_ns(), hb = 0;
+	uint64_t pv = wd_progress(f), pt = openmacfuse_uptime_ns(), hb = 0;
 
 	while (!f->wd_stop) {
 		uint64_t now, v, req, idle, acc, x;
 
 		usleep(200 * 1000);
-		now = nfuse_uptime_ns();
+		now = openmacfuse_uptime_ns();
 		v = wd_progress(f);
 		if (v != pv) {
 			pv = v;
@@ -1234,7 +1234,7 @@ static void *wd_thread(void *arg)
 		}
 		if ((!f->wd_ns && !f->mount_stuck_ns) || f->wd_fired_ns)
 			continue;
-		nfuse_tp_health(&f->tp, &req, &idle, &acc);
+		openmacfuse_tp_health(&f->tp, &req, &idle, &acc);
 		/*
 		 * During the mount handshake (two kernel panics seen on macOS 12): when handshake
 		 * requests get no reply, the macOS 12 NFS client closes the connection after about 13 seconds
@@ -1246,7 +1246,7 @@ static void *wd_thread(void *arg)
 		 * on its own (it is not killed, nothing is force-unmounted); the driver then exits (24).
 		 */
 		if (f->mounting && !f->srv.hung && req && f->mount_stuck_ns) {
-			uint64_t n2 = nfuse_uptime_ns(), from2 = req > pt ? req : pt;
+			uint64_t n2 = openmacfuse_uptime_ns(), from2 = req > pt ? req : pt;
 
 			if (req <= n2 && (n2 - req >= 2 * f->mount_stuck_ns ||
 					  (n2 - req >= f->mount_stuck_ns && n2 - (from2 < n2 ? from2 : n2) >= f->mount_stuck_ns)))
@@ -1258,7 +1258,7 @@ static void *wd_thread(void *arg)
 		 * (Without this the unsigned subtraction underflowed to 1.8e10 seconds and the accept thread
 		 * was declared stalled the moment it started.)
 		 */
-		now = nfuse_uptime_ns();
+		now = openmacfuse_uptime_ns();
 		if (req > now)
 			req = now;
 		if (idle > now)
@@ -1307,7 +1307,7 @@ static void wd_start(struct fuse *f)
 	if (pthread_create(&f->wd_th, NULL, wd_thread, f) == 0)
 		f->wd_running = 1;
 	else
-		nfuse_log("failed to start the watchdog thread");
+		openmacfuse_log("failed to start the watchdog thread");
 }
 
 static void wd_stop(struct fuse *f)
@@ -1321,25 +1321,25 @@ static void wd_stop(struct fuse *f)
 
 static void wd_config(struct fuse *f)
 {
-	const char *e = getenv("NFUSE_WATCHDOG_S");
-	const char *m = getenv("NFUSE_WATCHDOG_MAX_S");
-	const char *g = getenv("NFUSE_GUARD_S");
+	const char *e = getenv("OPENMACFUSE_WATCHDOG_S");
+	const char *m = getenv("OPENMACFUSE_WATCHDOG_MAX_S");
+	const char *g = getenv("OPENMACFUSE_GUARD_S");
 	double ws = e && *e ? strtod(e, NULL) : 30;
 	double ms = m && *m ? strtod(m, NULL) : 600;
 	double gs = g && *g ? strtod(g, NULL) : 20;
 
 	f->wd_ns = ws > 0 ? (uint64_t)(ws * 1e9) : 0;
 	{
-		const char *ms2 = getenv("NFUSE_MOUNT_STUCK_S");
+		const char *ms2 = getenv("OPENMACFUSE_MOUNT_STUCK_S");
 		double v = ms2 && *ms2 ? strtod(ms2, NULL) : 5;
 
 		f->mount_stuck_ns = v > 0 ? (uint64_t)(v * 1e9) : 0;
 	}
 	f->wd_max_ns = ms > 0 ? (uint64_t)(ms * 1e9) : 0;
-	f->guard_on = env_long("NFUSE_GUARD", 1) != 0;
+	f->guard_on = env_long("OPENMACFUSE_GUARD", 1) != 0;
 	f->guard_ms = gs > 0 ? (uint32_t)(gs * 1000) : 0;
 	f->guard_fd = -1;
-	nfuse_log("automatic recovery: watchdog %s (no progress for %.0f s, absolute limit %.0f s, progress counter %s), guard process %s (frozen after %.0f s without a heartbeat)",
+	openmacfuse_log("automatic recovery: watchdog %s (no progress for %.0f s, absolute limit %.0f s, progress counter %s), guard process %s (frozen after %.0f s without a heartbeat)",
 		  f->wd_ns ? "on" : "off", ws, ms,
 		  g_ext_set && g_ext.progress ? "provided by the file system" : "none (time only)",
 		  f->guard_on ? "on" : "off", gs);
@@ -1348,7 +1348,7 @@ static void wd_config(struct fuse *f)
 /* Start the guard process at the beginning of fuse_loop (after daemon, in this process) */
 static void guard_start(struct fuse *f)
 {
-	struct nfuse_guard_cfg c;
+	struct openmacfuse_guard_cfg c;
 
 	if (!f->guard_on || f->guard_fd >= 0 || !f->ch)
 		return;
@@ -1358,7 +1358,7 @@ static void guard_start(struct fuse *f)
 	c.log_fd = g_logf ? fileno(g_logf) : -1;
 	c.report_fd = g_ext_set && g_ext.report_fd ? g_ext.report_fd() : -1;
 	c.stall_ms = f->guard_ms;
-	c.lock_fd = nfuse_guard_lock_open(f->ch->mnt);
+	c.lock_fd = openmacfuse_guard_lock_open(f->ch->mnt);
 	if (c.lock_fd >= 0 && flock(c.lock_fd, LOCK_SH | LOCK_NB) != 0) {
 		close(c.lock_fd);	/* could not get it (should not happen): go without the lock */
 		c.lock_fd = -1;
@@ -1379,22 +1379,22 @@ static void guard_start(struct fuse *f)
 	}
 	if (g_logf)
 		fflush(g_logf);
-	f->guard_fd = nfuse_guard_start(&c, &f->guard_pid);
+	f->guard_fd = openmacfuse_guard_start(&c, &f->guard_pid);
 	/* The open file description of the lock is inherited and held by the guard process; the driver keeping its own copy does no harm (closed on exit), and it is not closed here so the shared lock is not affected */
 	if (f->guard_fd < 0)
-		nfuse_log("failed to start the guard process: %s", strerror(errno));
+		openmacfuse_log("failed to start the guard process: %s", strerror(errno));
 	else
-		nfuse_log("guard process pid %d", (int)f->guard_pid);
+		openmacfuse_log("guard process pid %d", (int)f->guard_pid);
 }
 
-const char *nfuse_end_reason(struct fuse *f)
+const char *openmacfuse_end_reason(struct fuse *f)
 {
 	return f && f->end_reason ? f->end_reason : "";
 }
 
-int nfuse_get_mount_info(struct fuse *f, struct nfuse_mount_info *mi, size_t size)
+int openmacfuse_get_mount_info(struct fuse *f, struct openmacfuse_mount_info *mi, size_t size)
 {
-	struct nfuse_mount_info m;
+	struct openmacfuse_mount_info m;
 	struct fuse_chan *ch;
 
 	if (!f || !(ch = f->ch) || !mi)
@@ -1468,7 +1468,7 @@ void fuse_exit(struct fuse *f)
  * Only sets flags / writes to the wake-up pipe, so it may be called from any thread (and from a
  * signal handler).
  */
-void nfuse_device_lost(struct fuse *f, const char *reason)
+void openmacfuse_device_lost(struct fuse *f, const char *reason)
 {
 	char c = 'l';
 
@@ -1480,7 +1480,7 @@ void nfuse_device_lost(struct fuse *f, const char *reason)
 	gettimeofday(&f->t_lost, NULL);
 	f->lost = 1;
 	f->exited = 1;
-	nfuse_log("device lost (%s): all further requests return IO; force-unmounting %s, then exiting",
+	openmacfuse_log("device lost (%s): all further requests return IO; force-unmounting %s, then exiting",
 		  reason ? reason : "no reason given", f->ch ? f->ch->mnt : "?");
 	(void)!write(f->wake[1], &c, 1);
 }
@@ -1493,13 +1493,13 @@ int fuse_loop(struct fuse *f)
 		return -1;
 	g_fuse = f;
 	guard_start(f);		/* fork the guard process first, then start the server threads (no request is being handled at fork time) */
-	if (nfuse_tp_resume(&f->tp)) {
-		nfuse_log("failed to start the server threads");
+	if (openmacfuse_tp_resume(&f->tp)) {
+		openmacfuse_log("failed to start the server threads");
 		return -1;
 	}
-	nfuse_log("serving (pid %d)", (int)getpid());
+	openmacfuse_log("serving (pid %d)", (int)getpid());
 	g_log_sync = g_log_sync_env;
-	f->loop_beat = nfuse_uptime_ns();
+	f->loop_beat = openmacfuse_uptime_ns();
 	f->loop_running = 1;
 	wd_start(f);
 	while (!f->exited) {
@@ -1507,7 +1507,7 @@ int fuse_loop(struct fuse *f)
 		char buf[64];
 		int nconns;
 
-		f->loop_beat = nfuse_uptime_ns();
+		f->loop_beat = openmacfuse_uptime_ns();
 		if (poll(&p, 1, 1000) > 0)
 			while (read(f->wake[0], buf, sizeof(buf)) > 0)
 				;
@@ -1519,10 +1519,10 @@ int fuse_loop(struct fuse *f)
 		 * from the mount table for 3 consecutive seconds also counts (in case a disconnect event was
 		 * missed). Still mounted but the connection is closed -> wait for the client to reconnect.
 		 */
-		nconns = nfuse_tp_nconns(&f->tp);
-		if (!nfuse_is_nfs_mounted(f->ch->mnt, f->ch->from)) {
+		nconns = openmacfuse_tp_nconns(&f->tp);
+		if (!openmacfuse_is_nfs_mounted(f->ch->mnt, f->ch->from)) {
 			if (nconns == 0 || ++absent >= 3) {
-				nfuse_log("unmount detected (%d connections), stopping service", nconns);
+				openmacfuse_log("unmount detected (%d connections), stopping service", nconns);
 				f->ch->mounted = 0;
 				break;
 			}
@@ -1533,9 +1533,9 @@ int fuse_loop(struct fuse *f)
 	f->loop_running = 0;
 	f->end_reason = f->lost ? "device_lost" : f->exited ? "exit_requested" : "unmounted";
 	if (f->lost)
-		nfuse_log("device lost, fuse_loop returns");
+		openmacfuse_log("device lost, fuse_loop returns");
 	else if (f->exited)
-		nfuse_log("exit requested");
+		openmacfuse_log("exit requested");
 	return 0;
 }
 
@@ -1561,24 +1561,24 @@ static void shutdown_mount(struct fuse *f)
 
 	if (ch && ch->mounted) {
 		if (f->tp_ok)
-			nfuse_tp_resume(&f->tp);
+			openmacfuse_tp_resume(&f->tp);
 		if (f->lost) {
 			/* Device gone: skip the normal unmount (it waits for the client to write back, which can only fail or hang) and force it right away */
 			struct timeval tv;
-			int rc = nfuse_unmount_force(ch->mnt, ch->from, nfuse_log);
+			int rc = openmacfuse_unmount_force(ch->mnt, ch->from, openmacfuse_log);
 
 			gettimeofday(&tv, NULL);
-			nfuse_log("device lost: forced unmount of %s %s, %.3f s after detection", ch->mnt,
+			openmacfuse_log("device lost: forced unmount of %s %s, %.3f s after detection", ch->mnt,
 				  rc == 0 ? "succeeded" : "failed",
 				  (tv.tv_sec - f->t_lost.tv_sec) +
 				  (tv.tv_usec - f->t_lost.tv_usec) / 1e6);
-		} else if (nfuse_unmount(ch->mnt, ch->from, nfuse_log) == 0)
-			nfuse_log("unmounted %s", ch->mnt);
+		} else if (openmacfuse_unmount(ch->mnt, ch->from, openmacfuse_log) == 0)
+			openmacfuse_log("unmounted %s", ch->mnt);
 		ch->mounted = 0;
 	}
 	if (f->tp_ok) {
-		f->pool_bytes = nfuse_tp_pool_bytes(&f->tp);
-		nfuse_tp_shutdown(&f->tp);
+		f->pool_bytes = openmacfuse_tp_pool_bytes(&f->tp);
+		openmacfuse_tp_shutdown(&f->tp);
 		f->tp_ok = 0;
 		if (ch)
 			ch->lfd = -1;
@@ -1609,7 +1609,7 @@ static void log_stats(struct fuse *f)
 
 	if (!g_logf && !g_log_stderr)
 		return;
-	nfuse_backend_fuse_stats(&f->srv.be, bs, sizeof(bs));
+	openmacfuse_backend_fuse_stats(&f->srv.be, bs, sizeof(bs));
 	ops[0] = 0;
 	for (i = NFS4_OP_MIN; i <= NFS4_OP_MAX && ol < sizeof(ops) - 64; i++)
 		if (f->srv.op_count[i])
@@ -1620,14 +1620,14 @@ static void log_stats(struct fuse *f)
 	{
 		double cur, peak;
 		phys_footprint(&cur, &peak);
-		nfuse_log("stats: COMPOUND %llu, STALE %llu, NOT_SAME %llu, connections total %llu, rejected %llu, buffer pool %zu bytes, process memory footprint current %.1f MB / peak %.1f MB",
+		openmacfuse_log("stats: COMPOUND %llu, STALE %llu, NOT_SAME %llu, connections total %llu, rejected %llu, buffer pool %zu bytes, process memory footprint current %.1f MB / peak %.1f MB",
 			 (unsigned long long)f->srv.compounds,
 			 (unsigned long long)f->srv.stale_fh,
 			 (unsigned long long)f->srv.readdir_notsame,
 			 (unsigned long long)f->tp.total_conns,
 			 (unsigned long long)f->tp.rejected, f->pool_bytes, cur, peak);
 	}
-	nfuse_log("writes: %llu bytes, %llu stable writes, %llu COMMITs; DRC %llu hits / %llu entries stored (currently %u entries, %zu bytes); %llu seqid replays, %llu BAD_SEQID; %llu NO_GRACE, %llu old clientids accepted; %llu test reply drops, %llu simulated restarts",
+	openmacfuse_log("writes: %llu bytes, %llu stable writes, %llu COMMITs; DRC %llu hits / %llu entries stored (currently %u entries, %zu bytes); %llu seqid replays, %llu BAD_SEQID; %llu NO_GRACE, %llu old clientids accepted; %llu test reply drops, %llu simulated restarts",
 		  (unsigned long long)f->srv.write_bytes,
 		  (unsigned long long)f->srv.stable_writes,
 		  (unsigned long long)f->srv.commits,
@@ -1639,29 +1639,29 @@ static void log_stats(struct fuse *f)
 		  (unsigned long long)f->srv.resurrected,
 		  (unsigned long long)f->srv.test_dropped,
 		  (unsigned long long)f->srv.reboots);
-	nfuse_log("operations (count/failed): %s", ops);
-	nfuse_log("watchdog headroom: oldest in-flight request %.2f s, longest stretch without device progress while a request was in flight %.2f s (threshold %.0f s, sampled every 0.2 s)",
+	openmacfuse_log("operations (count/failed): %s", ops);
+	openmacfuse_log("watchdog headroom: oldest in-flight request %.2f s, longest stretch without device progress while a request was in flight %.2f s (threshold %.0f s, sampled every 0.2 s)",
 		  f->wd_age_max_ns / 1e9, f->wd_quiet_max_ns / 1e9, f->wd_ns / 1e9);
-	nfuse_log("server processing time: total %.3f s, longest single %.3f s (%s), %llu of >= 1 s",
+	openmacfuse_log("server processing time: total %.3f s, longest single %.3f s (%s), %llu of >= 1 s",
 		  f->srv.busy_ns / 1e9, f->srv.busy_max_ns / 1e9, "holding the global lock",
 		  (unsigned long long)f->srv.busy_slow);
 	if (f->tcp_guard)
-		nfuse_log("local security: %llu connections rejected, %llu untrusted connections, %llu requests denied on untrusted connections, %llu promoted to trusted by presenting a valid file handle, longest process scan %.1f ms",
+		openmacfuse_log("local security: %llu connections rejected, %llu untrusted connections, %llu requests denied on untrusted connections, %llu promoted to trusted by presenting a valid file handle, longest process scan %.1f ms",
 			  (unsigned long long)f->guard_rejected, (unsigned long long)f->guard_untrusted,
 			  (unsigned long long)f->srv.gate_denied, (unsigned long long)f->srv.gate_proved,
 			  f->guard_scan_ms_max);
 	if (f->lost)
-		nfuse_log("%llu operations answered with IO after the device was lost",
+		openmacfuse_log("%llu operations answered with IO after the device was lost",
 			  (unsigned long long)f->srv.lost_replies);
-	nfuse_log("backend: %s", bs);
-	nfuse_backend_fuse_stats_m3(&f->srv.be, bs, sizeof(bs));
-	nfuse_log("names/xattr:%s | namedattr_ops=%llu xattr_trunc_on_write=%llu attr_names=%u | case_scan=%s dirs=%u entries=%llu conflicts=%u normdups=%u ms=%.1f",
+	openmacfuse_log("backend: %s", bs);
+	openmacfuse_backend_fuse_stats_m3(&f->srv.be, bs, sizeof(bs));
+	openmacfuse_log("names/xattr:%s | namedattr_ops=%llu xattr_trunc_on_write=%llu attr_names=%u | case_scan=%s dirs=%u entries=%llu conflicts=%u normdups=%u ms=%.1f",
 		  bs, (unsigned long long)f->srv.namedattr_ops,
 		  (unsigned long long)f->srv.xattr_trunc_on_write, f->srv.nattr_names,
 		  !f->case_scanned ? "none" : f->case_scan.complete ? "complete" : "partial",
 		  f->case_scan.dirs, (unsigned long long)f->case_scan.entries,
 		  f->case_scan.conflicts, f->case_scan.normdups, f->case_scan.ms);
-	nfuse_log("virtual ._ files:adf_lookups=%llu adf_virtual=%llu adf_builds=%llu adf_sessions=%llu adf_creates=%llu adf_reads=%llu adf_read_bytes=%llu adf_writes=%llu adf_write_bytes=%llu adf_applies=%llu adf_attr_writes=%llu adf_attr_same=%llu adf_attr_removes=%llu adf_removes=%llu adf_renames=%llu adf_invalid=%llu adf_alias_adds=%llu adf_alias_hits=%llu adf_alias_removes=%llu adf_pre_bytes=%zu",
+	openmacfuse_log("virtual ._ files:adf_lookups=%llu adf_virtual=%llu adf_builds=%llu adf_sessions=%llu adf_creates=%llu adf_reads=%llu adf_read_bytes=%llu adf_writes=%llu adf_write_bytes=%llu adf_applies=%llu adf_attr_writes=%llu adf_attr_same=%llu adf_attr_removes=%llu adf_removes=%llu adf_renames=%llu adf_invalid=%llu adf_alias_adds=%llu adf_alias_hits=%llu adf_alias_removes=%llu adf_pre_bytes=%zu",
 		  (unsigned long long)f->srv.adf_lookups, (unsigned long long)f->srv.adf_virtual,
 		  (unsigned long long)f->srv.adf_builds, (unsigned long long)f->srv.adf_sessions,
 		  (unsigned long long)f->srv.adf_creates, (unsigned long long)f->srv.adf_reads,
@@ -1686,9 +1686,9 @@ void fuse_destroy(struct fuse *f)
 	shutdown_mount(f);
 	/* The next steps all enter the file system (the final flush may hang on an unresponsive device): the watchdog keeps watching */
 	f->extra_name = "destroy";
-	f->extra_t0 = nfuse_uptime_ns();
-	nfuse_adf_flush_all(&f->srv);	/* virtual `._X` sessions not yet written back (the client unmounted without closing them) */
-	nfuse_state_free(&f->srv);	/* files the client left open (forced unmount etc.) are closed on its behalf before the file system cleans up */
+	f->extra_t0 = openmacfuse_uptime_ns();
+	openmacfuse_adf_flush_all(&f->srv);	/* virtual `._X` sessions not yet written back (the client unmounted without closing them) */
+	openmacfuse_state_free(&f->srv);	/* files the client left open (forced unmount etc.) are closed on its behalf before the file system cleans up */
 	if (f->op.destroy)
 		f->op.destroy(f->ctx.private_data);
 	f->extra_t0 = 0;
@@ -1698,12 +1698,12 @@ void fuse_destroy(struct fuse *f)
 		f->guard_fd = -1;
 	}
 	log_stats(f);
-	nfuse_backend_fuse_free(&f->srv.be);
+	openmacfuse_backend_fuse_free(&f->srv.be);
 	for (i = 0; i < f->srv.nattr_names; i++)
 		free(f->srv.attr_names[i]);
 	free(f->srv.attr_names);
 	free(f->srv.attr_ht);
-	nfuse_adf_free_all(&f->srv);
+	openmacfuse_adf_free_all(&f->srv);
 	if (f->ch)
 		f->ch->f = NULL;
 	close(f->wake[0]);

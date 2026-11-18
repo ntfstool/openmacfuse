@@ -1,10 +1,10 @@
 /*
  * unit_fuse_main.c -- unit tests for fuse_parse_cmdline / the fuse_main flow (run on the development machine, nothing is mounted)
  *
- *   make -C nfuse test
+ *   make test
  *
  * The mount steps (fuse_mount / fuse_new / fuse_loop / fuse_unmount / fuse_destroy) are replaced
- * with fakes (nfuse_main_hooked); no server thread is started and mount_nfs is never called.
+ * with fakes (openmacfuse_main_hooked); no server thread is started and mount_nfs is never called.
  * The backgrounding tests really fork: they verify that the parent exits with 0 once mounted,
  * that the caller's output pipe reaches end-of-file after the mount (while the child keeps
  * running), that init is called in the child, that the exit code is passed through when the
@@ -98,33 +98,33 @@ static void test_parse_cmdline(void)
 
 static void test_prepare(void)
 {
-	unsetenv("NFUSE_OPTS");
+	unsetenv("OPENMACFUSE_OPTS");
 	{
 		char *argv[] = { "fs", "-o", "ro,nosuid,nodev", NULL };
 		struct fuse_args a = FUSE_ARGS_INIT(3, argv);
 
-		CHECK(nfuse_main_prepare_args(&a, "/Volumes/My Disk/") == 0, "fix-up succeeds");
-		CHECK(strcmp(joined(&a), "fs|-onfuse_case=sensitive,nfuse_xattr=appledouble|-o|ro,nosuid,nodev|-ovolname=My Disk") == 0,
+		CHECK(openmacfuse_main_prepare_args(&a, "/Volumes/My Disk/") == 0, "fix-up succeeds");
+		CHECK(strcmp(joined(&a), "fs|-oopenmacfuse_case=sensitive,openmacfuse_xattr=appledouble|-o|ro,nosuid,nodev|-ovolname=My Disk") == 0,
 		      "defaults first, volume name added, nosuid etc. left as is for the library: %s", joined(&a));
 		fuse_opt_free_args(&a);
 	}
 	{
-		char *argv[] = { "fs", "-ovolname=X,noexec,nfuse_case=insensitive", NULL };
+		char *argv[] = { "fs", "-ovolname=X,noexec,openmacfuse_case=insensitive", NULL };
 		struct fuse_args a = FUSE_ARGS_INIT(2, argv);
 
-		setenv("NFUSE_OPTS", "nfuse_xattr=adfile", 1);
-		CHECK(nfuse_main_prepare_args(&a, "/Volumes/a,b") == 0, "fix-up succeeds");
-		CHECK(strcmp(joined(&a), "fs|-onfuse_case=sensitive,nfuse_xattr=appledouble|-ovolname=X,noexec,nfuse_case=insensitive|-onfuse_xattr=adfile") == 0,
-		      "an existing volname is not added again; NFUSE_OPTS comes last: %s", joined(&a));
-		unsetenv("NFUSE_OPTS");
+		setenv("OPENMACFUSE_OPTS", "openmacfuse_xattr=adfile", 1);
+		CHECK(openmacfuse_main_prepare_args(&a, "/Volumes/a,b") == 0, "fix-up succeeds");
+		CHECK(strcmp(joined(&a), "fs|-oopenmacfuse_case=sensitive,openmacfuse_xattr=appledouble|-ovolname=X,noexec,openmacfuse_case=insensitive|-oopenmacfuse_xattr=adfile") == 0,
+		      "an existing volname is not added again; OPENMACFUSE_OPTS comes last: %s", joined(&a));
+		unsetenv("OPENMACFUSE_OPTS");
 		fuse_opt_free_args(&a);
 	}
 	{
 		char *argv[] = { "fs", NULL };
 		struct fuse_args a = FUSE_ARGS_INIT(1, argv);
 
-		CHECK(nfuse_main_prepare_args(&a, "/Volumes/a,b") == 0 &&
-		      strcmp(joined(&a), "fs|-onfuse_case=sensitive,nfuse_xattr=appledouble|-ovolname=a\\,b") == 0,
+		CHECK(openmacfuse_main_prepare_args(&a, "/Volumes/a,b") == 0 &&
+		      strcmp(joined(&a), "fs|-oopenmacfuse_case=sensitive,openmacfuse_xattr=appledouble|-ovolname=a\\,b") == 0,
 		      "comma in the volume name is escaped: %s", joined(&a));
 		fuse_opt_free_args(&a);
 	}
@@ -178,7 +178,7 @@ static struct fuse *f_new(struct fuse_chan *ch, struct fuse_args *a, const struc
 		struct fuse_conn_info c;
 
 		memset(&c, 0, sizeof(c));
-		op->init(&c);	/* the fuse_new of nfuse also calls init before mounting */
+		op->init(&c);	/* the fuse_new of openmacfuse also calls init before mounting */
 	}
 	if (g_kill_parent_in_new) {
 		pid_t pp = getppid();
@@ -210,7 +210,7 @@ static void f_unmount(const char *mp, struct fuse_chan *ch) { L(ch == g_fake_ch 
 static void f_destroy(struct fuse *f) { L("destroy"); }
 static void f_detach_record(void) { L("detach"); }
 static const char *g_end = "unmounted";
-static int f_minfo(struct fuse *f, struct nfuse_mount_info *mi, size_t sz)
+static int f_minfo(struct fuse *f, struct openmacfuse_mount_info *mi, size_t sz)
 {
 	memset(mi, 0, sz);
 	snprintf(mi->case_mode, sizeof(mi->case_mode), "sensitive");
@@ -226,7 +226,7 @@ static int f_minfo(struct fuse *f, struct nfuse_mount_info *mi, size_t sz)
 }
 static const char *f_end(struct fuse *f) { return g_end; }
 
-static const struct nfuse_main_hooks fake_fg = {
+static const struct openmacfuse_main_hooks fake_fg = {
 	.mount = f_mount, .fnew = f_new, .set_signals = f_sig, .remove_signals = f_rsig,
 	.session = f_sess, .loop = f_loop, .unmount = f_unmount, .destroy = f_destroy,
 	.detach = f_detach_record, .mount_info = f_minfo, .end_reason = f_end,
@@ -277,13 +277,13 @@ static void test_foreground_flow(void)
 	int rc;
 
 	reset();
-	unsetenv("NFUSE_WATCH_DEV");
-	unsetenv("NFUSE_TEST_DEVLOST_FILE");
-	unsetenv("NFUSE_MOUNT_EXTRA");
-	rc = nfuse_main_hooked(5, argv, &uops, sizeof(uops), NULL, &fake_fg);
+	unsetenv("OPENMACFUSE_WATCH_DEV");
+	unsetenv("OPENMACFUSE_TEST_DEVLOST_FILE");
+	unsetenv("OPENMACFUSE_MOUNT_EXTRA");
+	rc = openmacfuse_main_hooked(5, argv, &uops, sizeof(uops), NULL, &fake_fg);
 	CHECK(rc == 0, "foreground returns 0 normally: %d", rc);
 	CHECK(strcmp(g_log, "mount,new,sig,loop,rsig,unmount,destroy") == 0, "call order: %s", g_log);
-	CHECK(strcmp(g_seen_args, "fuse2fs|-onfuse_case=sensitive,nfuse_xattr=appledouble|-o|volname=E,local,allow_other,fakeroot,nobrowse") == 0,
+	CHECK(strcmp(g_seen_args, "fuse2fs|-oopenmacfuse_case=sensitive,openmacfuse_xattr=appledouble|-o|volname=E,local,allow_other,fakeroot,nobrowse") == 0,
 	      "arguments handed to fuse_mount: %s", g_seen_args);
 	CHECK(g_seen_op == &uops, "the callback table is handed to fuse_new unchanged (clean-up after init / destroy is the library's job)");
 }
@@ -296,28 +296,28 @@ static void test_foreground_errors(void)
 		char *argv[] = { "fs", "-f", NULL };
 
 		reset();
-		rc = nfuse_main_hooked(2, argv, &uops, sizeof(uops), NULL, &fake_fg);
+		rc = openmacfuse_main_hooked(2, argv, &uops, sizeof(uops), NULL, &fake_fg);
 		CHECK(rc == 2 && g_log[0] == 0, "no mount point given -> 2, nothing mounted (rc=%d log=%s)", rc, g_log);
 	}
 	{
 		char *argv[] = { "fs", "-f", "/m", "/n", NULL };
 
 		reset();
-		rc = nfuse_main_hooked(4, argv, &uops, sizeof(uops), NULL, &fake_fg);
+		rc = openmacfuse_main_hooked(4, argv, &uops, sizeof(uops), NULL, &fake_fg);
 		CHECK(rc == 1, "surplus argument -> 1: %d", rc);
 	}
 	{
 		char *argv[] = { "fs", "-h", NULL };
 
 		reset();
-		rc = nfuse_main_hooked(2, argv, &uops, sizeof(uops), NULL, &fake_fg);
+		rc = openmacfuse_main_hooked(2, argv, &uops, sizeof(uops), NULL, &fake_fg);
 		CHECK(rc == 0 && g_log[0] == 0, "-h -> 0, nothing mounted");
 	}
 	{
 		char *argv[] = { "fs", "--version", "/m", NULL };
 
 		reset();
-		rc = nfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
+		rc = openmacfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
 		CHECK(rc == 0 && g_log[0] == 0, "--version -> 0, nothing mounted");
 	}
 	{
@@ -325,7 +325,7 @@ static void test_foreground_errors(void)
 
 		reset();
 		g_fail_mount = 1;
-		rc = nfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
+		rc = openmacfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
 		CHECK(rc == 3 && strcmp(g_log, "mount") == 0, "fuse_mount fails -> 3 (%d, %s)", rc, g_log);
 	}
 	{
@@ -334,7 +334,7 @@ static void test_foreground_errors(void)
 		reset();
 		g_fail_new = 1;
 		g_call_init_in_new = 1;
-		rc = nfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
+		rc = openmacfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
 		CHECK(rc == 4, "mount fails -> 4: %d", rc);
 		CHECK(strcmp(g_log, "mount,new,unmount") == 0, "channel cleaned up, loop not entered: %s", g_log);
 		CHECK(g_inits == 1 && g_destroys == 0,
@@ -343,7 +343,7 @@ static void test_foreground_errors(void)
 }
 
 /* Background: run fuse_main in a "caller" child process; returns the caller's exit code, *eof_ms = how long until end-of-file on the output pipe */
-static int run_bg(char **argv, int argc, const struct nfuse_main_hooks *hk, double *eof_ms)
+static int run_bg(char **argv, int argc, const struct openmacfuse_main_hooks *hk, double *eof_ms)
 {
 	int out[2], st = 0;
 	pid_t caller;
@@ -361,7 +361,7 @@ static int run_bg(char **argv, int argc, const struct nfuse_main_hooks *hk, doub
 		dup2(out[1], 1);
 		dup2(out[1], 2);
 		close(out[1]);
-		rc = nfuse_main_hooked(argc, argv, &uops, sizeof(uops), NULL, hk);
+		rc = openmacfuse_main_hooked(argc, argv, &uops, sizeof(uops), NULL, hk);
 		/* Only the background child (or an error) gets here: record the result */
 		{
 			char r[256];
@@ -413,7 +413,7 @@ static void test_background(const char *tmp)
 {
 	char marker[512], initpid[512], result[512];
 	char *argv[] = { "exfat", "-s", "-o", "allow_other,default_permissions,fsname=/dev/disk9s1,ro", "/Volumes/X", NULL };
-	struct nfuse_main_hooks hk = fake_fg;
+	struct openmacfuse_main_hooks hk = fake_fg;
 	double eof_ms = 0;
 	int rc;
 
@@ -466,7 +466,7 @@ static void test_background(const char *tmp)
 }
 
 
-/* ---------- NFUSE_REPORT telemetry ---------- */
+/* ---------- OPENMACFUSE_REPORT telemetry ---------- */
 
 static int count_lines(const char *p, const char *needle)
 {
@@ -495,7 +495,7 @@ static int all_lines_shaped(const char *p)
 		size_t l = strlen(line);
 
 		n++;
-		if (strncmp(line, "{\"ts\":", 6) != 0 || !strstr(line, ",\"role\":\"nfuse\",\"seq\":") ||
+		if (strncmp(line, "{\"ts\":", 6) != 0 || !strstr(line, ",\"role\":\"openmacfuse\",\"seq\":") ||
 		    !strstr(line, ",\"tool\":\"fuse2fs\"") || l < 3 || line[l - 1] != '\n' || line[l - 2] != '}')
 			ok = 0;
 	}
@@ -506,13 +506,13 @@ static int all_lines_shaped(const char *p)
 static void test_report(const char *tmp)
 {
 	char rep[512], lost[512];
-	char *argv[] = { "/Applications/X.app/Contents/Resources/nfuse/fuse2fs", "/Volumes/E", "-f", NULL };
+	char *argv[] = { "/Applications/X.app/Contents/Resources/openmacfuse/fuse2fs", "/Volumes/E", "-f", NULL };
 	int rc;
 
 	snprintf(rep, sizeof(rep), "%s/rep.jsonl", tmp);
 	snprintf(lost, sizeof(lost), "%s/LOST", tmp);
-	unsetenv("NFUSE_WATCH_DEV");
-	unsetenv("NFUSE_TEST_DEVLOST_FILE");
+	unsetenv("OPENMACFUSE_WATCH_DEV");
+	unsetenv("OPENMACFUSE_TEST_DEVLOST_FILE");
 
 	/* The telemetry tool field is the real program name of this process (getprogname), not the argv[0] passed to fuse_main */
 	setprogname("fuse2fs");
@@ -520,16 +520,16 @@ static void test_report(const char *tmp)
 	/* 1. Normal unmount */
 	reset();
 	unlink(rep);
-	setenv("NFUSE_REPORT", rep, 1);
-	rc = nfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
-	nfuse_report_close();
+	setenv("OPENMACFUSE_REPORT", rep, 1);
+	rc = openmacfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
+	openmacfuse_report_close();
 	CHECK(rc == 0, "foreground normal: %d", rc);
-	CHECK(all_lines_shaped(rep), "every line is {\"ts\":...,\"role\":\"nfuse\",\"seq\":...,\"tool\":\"<program>\"...} (the common telemetry line format)");
+	CHECK(all_lines_shaped(rep), "every line is {\"ts\":...,\"role\":\"openmacfuse\",\"seq\":...,\"tool\":\"<program>\"...} (the common telemetry line format)");
 	CHECK(count_lines(rep, "\"type\":\"start\"") == 1 && count_lines(rep, "\"foreground\":1") == 1, "one start line");
-	CHECK(count_lines(rep, "\"type\":\"nfuse_mount\",\"tool\":\"fuse2fs\",\"case\":\"sensitive\"") == 1 &&
+	CHECK(count_lines(rep, "\"type\":\"openmacfuse_mount\",\"tool\":\"fuse2fs\",\"case\":\"sensitive\"") == 1 &&
 	      count_lines(rep, "\"xattr\":\"appledouble\",\"transport\":\"tcp\"") == 1 &&
 	      count_lines(rep, "\"watchdog_s\":30,\"watchdog_max_s\":600,\"guard\":1,\"guard_s\":20") == 1,
-	      "one nfuse_mount line with the expected fields");
+	      "one openmacfuse_mount line with the expected fields");
 	CHECK(count_lines(rep, "\"type\":\"exit\",\"tool\":\"fuse2fs\",\"code\":0,\"ret\":0,\"reason\":\"unmounted\"") == 1,
 	      "exit: code 0 / unmounted");
 	CHECK(count_lines(rep, NULL) == 3, "3 lines in total: %d", count_lines(rep, NULL));
@@ -538,8 +538,8 @@ static void test_report(const char *tmp)
 	reset();
 	unlink(rep);
 	g_end = "device_lost";
-	rc = nfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
-	nfuse_report_close();
+	rc = openmacfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
+	openmacfuse_report_close();
 	CHECK(rc == 0 && count_lines(rep, "\"type\":\"exit\",\"tool\":\"fuse2fs\",\"code\":23,\"ret\":0,\"reason\":\"device_lost\"") == 1,
 	      "device lost: exit code 23");
 
@@ -547,37 +547,37 @@ static void test_report(const char *tmp)
 	reset();
 	unlink(rep);
 	g_fail_new = 1;
-	rc = nfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
-	nfuse_report_close();
+	rc = openmacfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
+	openmacfuse_report_close();
 	CHECK(rc == 4 && count_lines(rep, "\"type\":\"mount_fail\",\"tool\":\"fuse2fs\",\"stage\":\"fuse_new\",\"ret\":4") == 1 &&
-	      count_lines(rep, "\"code\":4,\"ret\":4,\"reason\":\"mount_failed\"") == 1 && count_lines(rep, "nfuse_mount") == 0,
-	      "mount failed: mount_fail + exit code 4, no nfuse_mount");
+	      count_lines(rep, "\"code\":4,\"ret\":4,\"reason\":\"mount_failed\"") == 1 && count_lines(rep, "openmacfuse_mount") == 0,
+	      "mount failed: mount_fail + exit code 4, no openmacfuse_mount");
 
 	/* 4. The device watcher starts before mounting: the test hook file already exists -> one device_lost line (how=test_hook) */
 	reset();
 	unlink(rep);
 	write_file(lost, "x");
-	setenv("NFUSE_TEST_DEVLOST_FILE", lost, 1);
+	setenv("OPENMACFUSE_TEST_DEVLOST_FILE", lost, 1);
 	g_loop_sleep_ms = 1300;
-	rc = nfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
-	nfuse_report_close();
-	unsetenv("NFUSE_TEST_DEVLOST_FILE");
+	rc = openmacfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
+	openmacfuse_report_close();
+	unsetenv("OPENMACFUSE_TEST_DEVLOST_FILE");
 	CHECK(count_lines(rep, "\"type\":\"device_lost\",\"tool\":\"fuse2fs\",\"err\":6,\"how\":\"test_hook\"") == 1,
 	      "device watcher: one device_lost line (reported only once): %d", count_lines(rep, "device_lost"));
-	CHECK(count_lines(rep, "\"watch_dev\":1") == 2, "start / nfuse_mount both carry watch_dev=1");
+	CHECK(count_lines(rep, "\"watch_dev\":1") == 2, "start / openmacfuse_mount both carry watch_dev=1");
 
-	/* 5. NFUSE_REPORT not set: nothing is written */
+	/* 5. OPENMACFUSE_REPORT not set: nothing is written */
 	reset();
 	unlink(rep);
-	unsetenv("NFUSE_REPORT");
-	rc = nfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
-	CHECK(rc == 0 && count_lines(rep, NULL) == -1, "no file is created when NFUSE_REPORT is not set");
+	unsetenv("OPENMACFUSE_REPORT");
+	rc = openmacfuse_main_hooked(3, argv, &uops, sizeof(uops), NULL, &fake_fg);
+	CHECK(rc == 0 && count_lines(rep, NULL) == -1, "no file is created when OPENMACFUSE_REPORT is not set");
 	unlink(lost);
 }
 
 int main(void)
 {
-	char tmp[] = "/tmp/nfuse-unit.XXXXXX";
+	char tmp[] = "/tmp/openmacfuse-unit.XXXXXX";
 
 	if (!mkdtemp(tmp)) {
 		perror("mkdtemp");

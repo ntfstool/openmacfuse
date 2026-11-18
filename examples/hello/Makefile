@@ -7,10 +7,10 @@ TOP    = ../..
 CC    ?= cc
 CFLAGS ?= -O2 -g -Wall -Wextra
 
-hello: hello.c $(TOP)/build/libnfuse.a
-	$(CC) $(CFLAGS) -I$(TOP)/include -o $@ hello.c $(TOP)/build/libnfuse.a -lpthread -framework CoreFoundation -framework IOKit
+hello: hello.c $(TOP)/build/libopenmacfuse.a
+	$(CC) $(CFLAGS) -I$(TOP)/include -o $@ hello.c $(TOP)/build/libopenmacfuse.a -lpthread -framework CoreFoundation -framework IOKit
 
-$(TOP)/build/libnfuse.a:
+$(TOP)/build/libopenmacfuse.a:
 	$(MAKE) -C $(TOP) lib
 
 clean:

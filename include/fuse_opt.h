@@ -1,5 +1,5 @@
 /*
- * fuse_opt.h -- FUSE 2.x compatibility header of nfuse: command-line argument list
+ * fuse_opt.h -- FUSE 2.x compatibility header of openmacfuse: command-line argument list
  *
  * Adding / removing arguments, plus the template parser fuse_opt_parse (used by FUSE 2.x file
  * systems that parse their own options; implemented in src/fuse_opt_parse.c as an independent
@@ -8,8 +8,8 @@
  * Copyright 2026 The OpenMacFUSE Authors
  * SPDX-License-Identifier: MIT
  */
-#ifndef NFUSE_FUSE_OPT_H
-#define NFUSE_FUSE_OPT_H
+#ifndef OPENMACFUSE_FUSE_OPT_H
+#define OPENMACFUSE_FUSE_OPT_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,8 +57,8 @@ struct fuse_opt {
 	int		value;
 };
 
-#define NFUSE_OPT_OFFSET_KEY	((unsigned long)-1)
-#define FUSE_OPT_KEY(templ, key)	{ templ, NFUSE_OPT_OFFSET_KEY, key }
+#define OPENMACFUSE_OPT_OFFSET_KEY	((unsigned long)-1)
+#define FUSE_OPT_KEY(templ, key)	{ templ, OPENMACFUSE_OPT_OFFSET_KEY, key }
 #define FUSE_OPT_END			{ NULL, 0, 0 }
 
 /* Options no template matches (an item of -o, or an argument starting with -) are passed to proc with this key */
@@ -97,4 +97,4 @@ int fuse_opt_match(const struct fuse_opt opts[], const char *opt);
 }
 #endif
 
-#endif /* NFUSE_FUSE_OPT_H */
+#endif /* OPENMACFUSE_FUSE_OPT_H */

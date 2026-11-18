@@ -4,7 +4,7 @@ Thanks for looking. OpenMacFUSE is small on purpose. Changes that keep it small,
 
 ## Before you open an issue
 
-- Run with `NFUSE_LOG=/tmp/nfuse.log NFUSE_VERBOSE=1` and attach the relevant part of the log.
+- Run with `OPENMACFUSE_LOG=/tmp/openmacfuse.log OPENMACFUSE_VERBOSE=1` and attach the relevant part of the log.
 - Include `sw_vers`, `uname -m`, and the output of `nfsstat -m` for the mount.
 - Say which transport was used (the log's mount line shows `proto=ticotsord` for the unix socket or `tcp`).
 - Remove anything private from logs (paths, file names, user names) before posting.

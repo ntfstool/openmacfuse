@@ -1,7 +1,7 @@
 /*
  * unit_fuse_opt.c -- unit tests for fuse_opt_parse / fuse_opt_match (run on the development machine, nothing is mounted)
  *
- *   make -C nfuse test
+ *   make test
  *
  * The template tables follow the way real FUSE file systems (ext, exFAT drivers) use the API
  * (values stored at an offset, %s / %lu / %i / %u / %llu, FUSE_OPT_KEY, KEEP / DISCARD,

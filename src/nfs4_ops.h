@@ -4,16 +4,16 @@
  * Copyright 2026 The OpenMacFUSE Authors
  * SPDX-License-Identifier: MIT
  */
-#ifndef NFUSE_NFS4_OPS_H
-#define NFUSE_NFS4_OPS_H
+#ifndef OPENMACFUSE_NFS4_OPS_H
+#define OPENMACFUSE_NFS4_OPS_H
 
 #include "nfs4_state.h"
 #include "rpc.h"
 #include "xdr.h"
 
 /* Output bits for *flags of nfs4_compound */
-#define NFUSE_CF_CACHE	0x1	/* contains a non-idempotent op: reply goes into the DRC */
-#define NFUSE_CF_DROP	0x2	/* test hook: do not send this reply */
+#define OPENMACFUSE_CF_CACHE	0x1	/* contains a non-idempotent op: reply goes into the DRC */
+#define OPENMACFUSE_CF_DROP	0x2	/* test hook: do not send this reply */
 
 /*
  * Process one COMPOUND call: d is positioned at the start of COMPOUND4args, the result is written
@@ -21,7 +21,7 @@
  * Returns 0 on success; -1 if the arguments cannot be parsed (the caller replies GARBAGE_ARGS).
  * The caller holds s->lock.
  */
-int nfs4_compound(struct nfuse_server *s, const rpc_call_t *call,
+int nfs4_compound(struct openmacfuse_server *s, const rpc_call_t *call,
 		  xdr_dec_t *d, xdr_enc_t *e, unsigned *flags);
 
 /*
@@ -43,7 +43,7 @@ int nfs4_compound_fail(xdr_dec_t *d, xdr_enc_t *e, uint32_t status);
  * d is positioned at the start of COMPOUND4args (the caller passes a copy).
  * No lock required (only the boot id is read).
  */
-uint32_t nfs4_compound_gate(struct nfuse_server *s, xdr_dec_t *d, int *proved, uint32_t *first_op);
+uint32_t nfs4_compound_gate(struct openmacfuse_server *s, xdr_dec_t *d, int *proved, uint32_t *first_op);
 
 const char *nfs4_op_name(uint32_t op);
 /*
@@ -51,4 +51,4 @@ const char *nfs4_op_name(uint32_t op);
  */
 int nfs4_op_code(const char *name);
 
-#endif /* NFUSE_NFS4_OPS_H */
+#endif /* OPENMACFUSE_NFS4_OPS_H */

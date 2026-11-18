@@ -71,15 +71,15 @@
 #include <unistd.h>
 
 #include "fuse.h"
-#include "nfuse.h"
+#include "openmacfuse.h"
 #include "appledouble.h"
 #include "backend_fuse.h"
 #include "names.h"
-#include "nfs4_state.h"	/* NFUSE_FH_MAXANC */
+#include "nfs4_state.h"	/* OPENMACFUSE_FH_MAXANC */
 #include "synth_ino.h"
 
 /* Marker recorded on a file when ad_clean=0, meaning "`._X` already migrated" (hidden from attribute listings) */
-#define BF_AD_MARKER	"org.nfuse.appledouble-migrated"
+#define BF_AD_MARKER	"org.openmacfuse.appledouble-migrated"
 
 /*
  * Objects without FinderInfo: on the named-attribute channel it reads as 32 zero bytes (and is not listed).
@@ -125,7 +125,7 @@ struct bf_aslot {
 	uint64_t	ino;		/* 0 = empty */
 	uint64_t	at;		/* monotonic clock when the attributes were fetched (nanoseconds) */
 	uint8_t		x;		/* includes the getxtimes result */
-	struct nfuse_attr a;
+	struct openmacfuse_attr a;
 };
 
 struct bf_lru {
@@ -194,7 +194,7 @@ struct bf_adc {
 	uint64_t	size;
 	struct timespec	mtime;
 	uint64_t	stamp;
-	struct nfuse_ad	ad;
+	struct openmacfuse_ad	ad;
 };
 
 struct bf_open {
@@ -283,7 +283,7 @@ struct bf_hint {
 	uint64_t	parent;
 	char		*name;
 	uint8_t		nchain;
-	uint64_t	chain[NFUSE_FH_MAXANC];	/* ancestor chain of parent (nearest first) */
+	uint64_t	chain[OPENMACFUSE_FH_MAXANC];	/* ancestor chain of parent (nearest first) */
 };
 
 struct bf_ctx {
@@ -291,7 +291,7 @@ struct bf_ctx {
 	struct fuse_context		*fctx;
 	uint64_t			root;
 	uint64_t			salt;
-	struct nfuse_synth		*synth;	/* assigns inode numbers by path when the file system provides none (synth_ino.c) */
+	struct openmacfuse_synth		*synth;	/* assigns inode numbers by path when the file system provides none (synth_ino.c) */
 
 	struct bf_node			**ht;
 	size_t				htmask;
@@ -308,7 +308,7 @@ struct bf_ctx {
 	size_t				snap_max_bytes;
 	uint64_t			snap_clock;
 
-	struct nfuse_statfs		sf;
+	struct openmacfuse_statfs		sf;
 	uint64_t			sf_at;
 	int				sf_ok;
 
@@ -328,7 +328,7 @@ struct bf_ctx {
 	int				ci;
 	int				nfc;
 	int				raw_names;
-	struct nfuse_ext_ops		ext;
+	struct openmacfuse_ext_ops		ext;
 	struct bf_didx			*didx;
 	size_t				didx_bytes;
 	size_t				didx_max;
@@ -573,7 +573,7 @@ static int join_path(char *out, const char *dir, int dirlen, const char *name,
 
 /* ---------- Attributes ---------- */
 
-static void stat_to_attr(const struct stat *sb, struct nfuse_attr *a)
+static void stat_to_attr(const struct stat *sb, struct openmacfuse_attr *a)
 {
 	memset(a, 0, sizeof(*a));
 	a->ino = sb->st_ino;
@@ -600,7 +600,7 @@ static void stat_to_attr(const struct stat *sb, struct nfuse_attr *a)
 }
 
 static int do_getattr(struct bf_ctx *b, const char *path, unsigned want,
-		      struct nfuse_attr *a)
+		      struct openmacfuse_attr *a)
 {
 	struct stat sb;
 	int r;
@@ -612,8 +612,8 @@ static int do_getattr(struct bf_ctx *b, const char *path, unsigned want,
 		return r;
 	stat_to_attr(&sb, a);
 	if (b->synth && a->ino == 0)
-		a->ino = nfuse_synth_get(b->synth, path);
-	if ((want & NFUSE_WANT_XTIMES) && b->op->getxtimes) {
+		a->ino = openmacfuse_synth_get(b->synth, path);
+	if ((want & OPENMACFUSE_WANT_XTIMES) && b->op->getxtimes) {
 		struct timespec bk = { 0, 0 }, cr = { 0, 0 };
 
 		b->st.getxtimes_calls++;
@@ -626,27 +626,27 @@ static int do_getattr(struct bf_ctx *b, const char *path, unsigned want,
 }
 
 static void cache_attr(struct bf_ctx *b, struct bf_node *n,
-		       const struct nfuse_attr *a, unsigned want)
+		       const struct openmacfuse_attr *a, unsigned want)
 {
 	struct bf_aslot *sl = &b->acache[mix64(n->ino) & (BF_ACACHE_SLOTS - 1)];
 
 	sl->a = *a;
 	sl->a.ino = n->ino;
 	sl->ino = n->ino;
-	sl->x = (want & NFUSE_WANT_XTIMES) ? 1 : 0;
+	sl->x = (want & OPENMACFUSE_WANT_XTIMES) ? 1 : 0;
 	sl->at = now_ns();
 	n->isdir = S_ISDIR(a->mode) ? 1 : 0;	/* the caller must have taken the node off the LRU list first */
 }
 
 /* Attributes from the cache if still fresh; NULL if not */
-static const struct nfuse_attr *attr_get(struct bf_ctx *b, uint64_t ino,
+static const struct openmacfuse_attr *attr_get(struct bf_ctx *b, uint64_t ino,
 					unsigned want)
 {
 	struct bf_aslot *sl = &b->acache[mix64(ino) & (BF_ACACHE_SLOTS - 1)];
 
 	if (sl->ino != ino)
 		return NULL;
-	if ((want & NFUSE_WANT_XTIMES) && !sl->x)
+	if ((want & OPENMACFUSE_WANT_XTIMES) && !sl->x)
 		return NULL;
 	if (now_ns() - sl->at >= b->attr_ttl_ns)
 		return NULL;
@@ -655,7 +655,7 @@ static const struct nfuse_attr *attr_get(struct bf_ctx *b, uint64_t ino,
 
 /* A node's type may only become known when its attributes are first fetched: switch LRU lists */
 static void node_set_attr(struct bf_ctx *b, struct bf_node *n,
-			  const struct nfuse_attr *a, unsigned want)
+			  const struct openmacfuse_attr *a, unsigned want)
 {
 	int was = n->isdir, inlru = n->inlru;
 
@@ -815,7 +815,7 @@ static void snap_ad_first(struct bf_snap *s)
 
 		if (s->ents[i].nlen > 2 && nm[0] == '.' && nm[1] == '_')
 			continue;
-		h = (uint32_t)nfuse_hash_bytes(nm, s->ents[i].nlen) & mask;
+		h = (uint32_t)openmacfuse_hash_bytes(nm, s->ents[i].nlen) & mask;
 		while (ht[h])
 			h = (h + 1) & mask;
 		ht[h] = i + 1;
@@ -826,7 +826,7 @@ static void snap_ad_first(struct bf_snap *s)
 
 		if (!(s->ents[i].nlen > 2 && nm[0] == '.' && nm[1] == '_'))
 			continue;
-		h = (uint32_t)nfuse_hash_bytes(nm + 2, xl) & mask;
+		h = (uint32_t)openmacfuse_hash_bytes(nm + 2, xl) & mask;
 		while (ht[h]) {
 			uint32_t x = ht[h] - 1;
 
@@ -895,13 +895,13 @@ static struct bf_snap *snap_build(struct bf_ctx *b, uint64_t dir,
 	/* Entries for which filler gave no inode number: fill each in with getattr (our own driver always gives one) */
 	for (i = 0; i < s->n; i++) {
 		struct bf_sent *e = &s->ents[i];
-		struct nfuse_attr a;
+		struct openmacfuse_attr a;
 
 		if (e->ino && e->type)
 			continue;
 		if (join_path(b->path2, dirpath, dirlen, s->names + e->noff,
 			      e->nlen) < 0 ||
-		    do_getattr(b, b->path2, NFUSE_WANT_BASIC, &a))
+		    do_getattr(b, b->path2, OPENMACFUSE_WANT_BASIC, &a))
 			continue;
 		e->ino = a.ino;
 		e->type = (uint16_t)(a.mode & S_IFMT);
@@ -966,7 +966,7 @@ static long snap_find_ino(struct bf_ctx *b, struct bf_snap *s, uint64_t ino)
 }
 
 /* The directory's current verifier (cookieverf): it changes whenever the directory's change / mtime / size changes */
-static uint64_t dir_verf(struct bf_ctx *b, uint64_t dir, const struct nfuse_attr *a)
+static uint64_t dir_verf(struct bf_ctx *b, uint64_t dir, const struct openmacfuse_attr *a)
 {
 	uint64_t v = mix64(b->salt ^ dir);
 
@@ -999,7 +999,7 @@ static int snap_has_name(struct bf_ctx *b, struct bf_snap *s, const char *name,
 		s->nidxcap = cap;
 		mask = cap - 1;
 		for (i = 0; i < s->n; i++) {
-			h = (uint32_t)nfuse_hash_bytes(s->names + s->ents[i].noff,
+			h = (uint32_t)openmacfuse_hash_bytes(s->names + s->ents[i].noff,
 						       s->ents[i].nlen) & mask;
 			while (s->nidx[h])
 				h = (h + 1) & mask;
@@ -1008,7 +1008,7 @@ static int snap_has_name(struct bf_ctx *b, struct bf_snap *s, const char *name,
 		b->snap_bytes += snap_size(s) - before;
 	}
 	mask = s->nidxcap - 1;
-	h = (uint32_t)nfuse_hash_bytes(name, nl) & mask;
+	h = (uint32_t)openmacfuse_hash_bytes(name, nl) & mask;
 	while (s->nidx[h]) {
 		const struct bf_sent *e = &s->ents[s->nidx[h] - 1];
 		if (e->nlen == nl && memcmp(s->names + e->noff, name, nl) == 0)
@@ -1022,11 +1022,11 @@ static int snap_has_name(struct bf_ctx *b, struct bf_snap *s, const char *name,
 
 static int name_key(struct bf_ctx *b, const char *name, size_t nl, char *out)
 {
-	int n = nfuse_name_key(name, nl, b->ci, b->ext.casefold, out, NFUSE_KEY_MAX);
+	int n = openmacfuse_name_key(name, nl, b->ci, b->ext.casefold, out, OPENMACFUSE_KEY_MAX);
 
 	if (n < 0) {
-		if (nl >= NFUSE_KEY_MAX)
-			nl = NFUSE_KEY_MAX - 1;
+		if (nl >= OPENMACFUSE_KEY_MAX)
+			nl = OPENMACFUSE_KEY_MAX - 1;
 		memcpy(out, name, nl);
 		out[nl] = 0;
 		n = (int)nl;
@@ -1036,9 +1036,9 @@ static int name_key(struct bf_ctx *b, const char *name, size_t nl, char *out)
 
 static int nfc_equal(const char *a, size_t al, const char *b2, size_t bl)
 {
-	char x[NFUSE_KEY_MAX], y[NFUSE_KEY_MAX];
-	int xl = nfuse_name_nfc(a, al, x, sizeof(x));
-	int yl = nfuse_name_nfc(b2, bl, y, sizeof(y));
+	char x[OPENMACFUSE_KEY_MAX], y[OPENMACFUSE_KEY_MAX];
+	int xl = openmacfuse_name_nfc(a, al, x, sizeof(x));
+	int yl = openmacfuse_name_nfc(b2, bl, y, sizeof(y));
 
 	if (xl < 0 || yl < 0)
 		return al == bl && memcmp(a, b2, al) == 0;
@@ -1151,9 +1151,9 @@ static void didx_rehash(struct bf_didx *x, uint32_t nbk)
 static int didx_add(struct bf_ctx *b, struct bf_didx *x, const char *name, size_t nl,
 		    uint64_t ino, int counting)
 {
-	char key[NFUSE_KEY_MAX];
+	char key[OPENMACFUSE_KEY_MAX];
 	int kl = name_key(b, name, nl, key);
-	uint64_t h = nfuse_hash_bytes(key, (size_t)kl);
+	uint64_t h = openmacfuse_hash_bytes(key, (size_t)kl);
 	struct bf_dent *e;
 	uint32_t k;
 
@@ -1184,7 +1184,7 @@ static int didx_add(struct bf_ctx *b, struct bf_didx *x, const char *name, size_
 			const struct bf_dent *o = &x->e[i - 1];
 			if (!o->dead && o->h == h &&
 			    !nfc_equal(x->names + o->noff, o->nlen, name, nl)) {
-				char k2[NFUSE_KEY_MAX];
+				char k2[OPENMACFUSE_KEY_MAX];
 				int k2l = name_key(b, x->names + o->noff, o->nlen, k2);
 				if (k2l == kl && memcmp(k2, key, (size_t)kl) == 0) {
 					x->conflicts++;
@@ -1225,9 +1225,9 @@ static int didx_add(struct bf_ctx *b, struct bf_didx *x, const char *name, size_
 static int didx_match(struct bf_ctx *b, struct bf_didx *x, const char *name, size_t nl,
 		      long *exact, uint32_t *out, int max)
 {
-	char key[NFUSE_KEY_MAX], k2[NFUSE_KEY_MAX];
+	char key[OPENMACFUSE_KEY_MAX], k2[OPENMACFUSE_KEY_MAX];
 	int kl = name_key(b, name, nl, key), cnt = 0;
-	uint64_t h = nfuse_hash_bytes(key, (size_t)kl);
+	uint64_t h = openmacfuse_hash_bytes(key, (size_t)kl);
 	uint32_t i = x->bk[h % x->nbk];
 
 	*exact = -1;
@@ -1297,9 +1297,9 @@ static void didx_compact(struct bf_ctx *b, struct bf_didx *x)
 
 static void didx_del(struct bf_ctx *b, struct bf_didx *x, const char *name, size_t nl)
 {
-	char key[NFUSE_KEY_MAX];
+	char key[OPENMACFUSE_KEY_MAX];
 	int kl = name_key(b, name, nl, key);
-	uint64_t h = nfuse_hash_bytes(key, (size_t)kl);
+	uint64_t h = openmacfuse_hash_bytes(key, (size_t)kl);
 	uint32_t *pp = &x->bk[h % x->nbk];
 
 	while (*pp) {
@@ -1466,12 +1466,12 @@ static void node_freeze(struct bf_ctx *b, struct bf_node *n, const uint64_t *anc
  */
 static void freeze_subtree(struct bf_ctx *b, struct bf_node *x)
 {
-	uint64_t anc[NFUSE_FH_MAXANC];
+	uint64_t anc[OPENMACFUSE_FH_MAXANC];
 	size_t i;
 	int k;
 
 	if (!x->fchain) {
-		k = canon_chain(b, x, anc, NFUSE_FH_MAXANC);
+		k = canon_chain(b, x, anc, OPENMACFUSE_FH_MAXANC);
 		node_freeze(b, x, anc, k);
 	}
 	if (!x->isdir)
@@ -1485,15 +1485,15 @@ static void freeze_subtree(struct bf_ctx *b, struct bf_node *x)
 
 			if (m == x || m->fchain || m->ino == b->root)
 				continue;
-			for (depth = 0; depth < NFUSE_FH_MAXANC && p && p->ino != b->root;
+			for (depth = 0; depth < OPENMACFUSE_FH_MAXANC && p && p->ino != b->root;
 			     depth++) {
 				if (p->parent == x->ino)
 					break;
 				p = node_find(b, p->parent);
 			}
-			if (p && p->ino != b->root && depth < NFUSE_FH_MAXANC &&
+			if (p && p->ino != b->root && depth < OPENMACFUSE_FH_MAXANC &&
 			    p->parent == x->ino) {
-				k = canon_chain(b, m, anc, NFUSE_FH_MAXANC);
+				k = canon_chain(b, m, anc, OPENMACFUSE_FH_MAXANC);
 				node_freeze(b, m, anc, k);
 			}
 		}
@@ -1565,18 +1565,18 @@ static void hint_set(struct bf_ctx *b, uint64_t ino, uint64_t parent,
 		h->nchain = p->nfchain;
 		memcpy(h->chain, p->fchain, (size_t)p->nfchain * sizeof(uint64_t));
 	} else {
-		h->nchain = (uint8_t)canon_chain(b, p, h->chain, NFUSE_FH_MAXANC);
+		h->nchain = (uint8_t)canon_chain(b, p, h->chain, OPENMACFUSE_FH_MAXANC);
 	}
 }
 
 /* ---------- Backend interface implementation ---------- */
 
-static nfuse_ino_t bf_root(void *ctx)
+static openmacfuse_ino_t bf_root(void *ctx)
 {
 	return ((struct bf_ctx *)ctx)->root;
 }
 
-static void bf_begin(void *ctx, const struct nfuse_cred *cred)
+static void bf_begin(void *ctx, const struct openmacfuse_cred *cred)
 {
 	struct bf_ctx *b = ctx;
 
@@ -1588,7 +1588,7 @@ static void bf_begin(void *ctx, const struct nfuse_cred *cred)
 	b->fctx->umask = 0;	/* the mode sent by the client already has the process umask applied */
 }
 
-static int bf_getattr(void *ctx, nfuse_ino_t ino, struct nfuse_attr *st,
+static int bf_getattr(void *ctx, openmacfuse_ino_t ino, struct openmacfuse_attr *st,
 		      unsigned want)
 {
 	struct bf_ctx *b = ctx;
@@ -1598,7 +1598,7 @@ static int bf_getattr(void *ctx, nfuse_ino_t ino, struct nfuse_attr *st,
 	if (!n)
 		return -ENOENT;
 	{
-		const struct nfuse_attr *ca = attr_get(b, ino, want);
+		const struct openmacfuse_attr *ca = attr_get(b, ino, want);
 		if (ca) {
 			b->st.attr_hits++;
 			*st = *ca;
@@ -1624,15 +1624,15 @@ static int bf_getattr(void *ctx, nfuse_ino_t ino, struct nfuse_attr *st,
 }
 
 static int real_name(struct bf_ctx *b, uint64_t dir, const char *name, char *real,
-		     struct nfuse_attr *a);
+		     struct openmacfuse_attr *a);
 
-static int bf_lookup(void *ctx, nfuse_ino_t dir, const char *oname,
-		     nfuse_ino_t *out)
+static int bf_lookup(void *ctx, openmacfuse_ino_t dir, const char *oname,
+		     openmacfuse_ino_t *out)
 {
 	struct bf_ctx *b = ctx;
 	struct bf_node *d = node_find(b, dir), *n;
-	struct nfuse_attr a;
-	char name[NFUSE_KEY_MAX];
+	struct openmacfuse_attr a;
+	char name[OPENMACFUSE_KEY_MAX];
 	size_t nl;
 	int r;
 
@@ -1651,12 +1651,12 @@ static int bf_lookup(void *ctx, nfuse_ino_t dir, const char *oname,
 	if (!S_ISDIR(a.mode) && a.nlink > 1 &&
 	    (n->parent != dir || !n->name || strcmp(n->name, name) != 0))
 		hint_set(b, a.ino, dir, name);	/* another name of a hard link */
-	node_set_attr(b, n, &a, NFUSE_WANT_BASIC);
+	node_set_attr(b, n, &a, OPENMACFUSE_WANT_BASIC);
 	*out = a.ino;
 	return 0;
 }
 
-static int bf_lookupp(void *ctx, nfuse_ino_t dir, nfuse_ino_t *out)
+static int bf_lookupp(void *ctx, openmacfuse_ino_t dir, openmacfuse_ino_t *out)
 {
 	struct bf_ctx *b = ctx;
 	struct bf_node *n = node_find(b, dir);
@@ -1680,7 +1680,7 @@ static int recover_one(struct bf_ctx *b, uint64_t ino, uint64_t parent)
 {
 	struct bf_node *p = node_find(b, parent), *n;
 	struct bf_snap *s;
-	struct nfuse_attr a, da;
+	struct openmacfuse_attr a, da;
 	long i;
 	int dlen, len, err, tries;
 
@@ -1693,7 +1693,7 @@ static int recover_one(struct bf_ctx *b, uint64_t ino, uint64_t parent)
 	for (tries = 0; tries < 2; tries++) {
 		s = tries == 0 ? snap_find(b, parent) : NULL;
 		if (!s) {
-			if (do_getattr(b, b->path1, NFUSE_WANT_BASIC, &da))
+			if (do_getattr(b, b->path1, OPENMACFUSE_WANT_BASIC, &da))
 				return -ESTALE;
 			s = snap_build(b, parent, b->path1, dlen,
 				       dir_verf(b, parent, &da), &err);
@@ -1705,14 +1705,14 @@ static int recover_one(struct bf_ctx *b, uint64_t ino, uint64_t parent)
 			continue;
 		len = join_path(b->path2, b->path1, dlen,
 				s->names + s->ents[i].noff, s->ents[i].nlen);
-		if (len < 0 || do_getattr(b, b->path2, NFUSE_WANT_BASIC, &a) ||
+		if (len < 0 || do_getattr(b, b->path2, OPENMACFUSE_WANT_BASIC, &a) ||
 		    a.ino != ino)
 			continue;
 		n = node_insert(b, ino, parent, s->names + s->ents[i].noff,
 				s->ents[i].nlen, S_ISDIR(a.mode), 1);
 		if (!n)
 			return -ENOMEM;
-		node_set_attr(b, n, &a, NFUSE_WANT_BASIC);
+		node_set_attr(b, n, &a, OPENMACFUSE_WANT_BASIC);
 		return 0;
 	}
 	return -ESTALE;
@@ -1740,7 +1740,7 @@ static int resolve_ino(struct bf_ctx *b, uint64_t ino, const uint64_t *anc,
 		return -ESTALE;
 	h = hint_find(b, ino);
 	if (h) {
-		uint64_t hp = h->parent, hc[NFUSE_FH_MAXANC];
+		uint64_t hp = h->parent, hc[OPENMACFUSE_FH_MAXANC];
 		int hn = h->nchain;
 
 		memcpy(hc, h->chain, sizeof(hc));
@@ -1757,11 +1757,11 @@ static int resolve_ino(struct bf_ctx *b, uint64_t ino, const uint64_t *anc,
 	return recover_one(b, ino, anc[0]);
 }
 
-static int bf_resolve(void *ctx, nfuse_ino_t ino, const nfuse_ino_t *anc, int nanc)
+static int bf_resolve(void *ctx, openmacfuse_ino_t ino, const openmacfuse_ino_t *anc, int nanc)
 {
 	struct bf_ctx *b = ctx;
 	struct bf_node *n = node_find(b, ino);
-	uint64_t cur[NFUSE_FH_MAXANC];
+	uint64_t cur[OPENMACFUSE_FH_MAXANC];
 	int k;
 
 	if (n) {
@@ -1780,7 +1780,7 @@ static int bf_resolve(void *ctx, nfuse_ino_t ino, const nfuse_ino_t *anc, int na
 	/* After recovery the canonical chain differs from the one the client holds (a rename happened in between): freeze it as the client's, so the handle bytes do not change */
 	n = node_find(b, ino);
 	if (n && nanc > 0) {
-		k = canon_chain(b, n, cur, NFUSE_FH_MAXANC);
+		k = canon_chain(b, n, cur, OPENMACFUSE_FH_MAXANC);
 		if (k != nanc || memcmp(cur, anc, (size_t)k * sizeof(uint64_t)) != 0)
 			node_freeze(b, n, anc, nanc);
 	}
@@ -1788,8 +1788,8 @@ static int bf_resolve(void *ctx, nfuse_ino_t ino, const nfuse_ino_t *anc, int na
 }
 
 /* Ancestor chain for a handle: the frozen one if there is one, otherwise the canonical parent chain from the node table (at most max levels) */
-static int bf_ancestry(void *ctx, nfuse_ino_t ino, nfuse_ino_t parent_hint,
-		       nfuse_ino_t *anc, int max)
+static int bf_ancestry(void *ctx, openmacfuse_ino_t ino, openmacfuse_ino_t parent_hint,
+		       openmacfuse_ino_t *anc, int max)
 {
 	struct bf_ctx *b = ctx;
 	struct bf_node *n = node_find(b, ino);
@@ -1818,13 +1818,13 @@ static int bf_ancestry(void *ctx, nfuse_ino_t ino, nfuse_ino_t parent_hint,
 	return k;
 }
 
-static int bf_readdir(void *ctx, nfuse_ino_t dir, uint64_t pos, uint64_t *verf,
-		      unsigned want, nfuse_fill_fn fill, void *arg, int *eof)
+static int bf_readdir(void *ctx, openmacfuse_ino_t dir, uint64_t pos, uint64_t *verf,
+		      unsigned want, openmacfuse_fill_fn fill, void *arg, int *eof)
 {
 	struct bf_ctx *b = ctx;
 	struct bf_node *d = node_find(b, dir);
 	struct bf_snap *s;
-	struct nfuse_attr da;
+	struct openmacfuse_attr da;
 	uint64_t cur;
 	uint64_t i;
 	int dlen, r, err;
@@ -1836,12 +1836,12 @@ static int bf_readdir(void *ctx, nfuse_ino_t dir, uint64_t pos, uint64_t *verf,
 	if (dlen < 0)
 		return dlen;
 	/* Directory attributes are fetched fresh every time (no cache): the verifier must reflect the directory's state right now */
-	r = do_getattr(b, b->path1, NFUSE_WANT_BASIC, &da);
+	r = do_getattr(b, b->path1, OPENMACFUSE_WANT_BASIC, &da);
 	if (r)
 		return r;
 	if (!S_ISDIR(da.mode))
 		return -ENOTDIR;
-	node_set_attr(b, d, &da, NFUSE_WANT_BASIC);
+	node_set_attr(b, d, &da, OPENMACFUSE_WANT_BASIC);
 	da.change += d->gen;		/* a directory modified through this layer: the verifier must change */
 	cur = dir_verf(b, dir, &da);
 	/*
@@ -1860,7 +1860,7 @@ static int bf_readdir(void *ctx, nfuse_ino_t dir, uint64_t pos, uint64_t *verf,
 			       (unsigned long long)da.change, d->gen,
 			       (long)da.mtime.tv_sec, da.mtime.tv_nsec,
 			       (unsigned long long)da.size);
-		return -NFUSE_E_NOT_SAME;
+		return -OPENMACFUSE_E_NOT_SAME;
 	}
 	s = snap_find(b, dir);
 	if (s && s->verf == cur) {
@@ -1873,14 +1873,14 @@ static int bf_readdir(void *ctx, nfuse_ino_t dir, uint64_t pos, uint64_t *verf,
 	}
 	*verf = cur;
 	if (pos > s->n)
-		return -NFUSE_E_BAD_COOKIE;
+		return -OPENMACFUSE_E_BAD_COOKIE;
 	/* Inserting nodes may evict other snapshots: this snapshot is the keep one (just used) and will not be freed */
 	for (i = pos; i < s->n; i++) {
 		struct bf_sent *e = &s->ents[i];
 		const char *nm = s->names + e->noff;
-		struct nfuse_attr a;
-		const struct nfuse_attr *pa = NULL;
-		struct nfuse_dirent de;
+		struct openmacfuse_attr a;
+		const struct openmacfuse_attr *pa = NULL;
+		struct openmacfuse_dirent de;
 		struct bf_node *n;
 
 		/* Named-attribute channel: a `._X` whose X exists is not listed (its contents are presented as X's named attributes) */
@@ -1892,7 +1892,7 @@ static int bf_readdir(void *ctx, nfuse_ino_t dir, uint64_t pos, uint64_t *verf,
 		}
 		n = node_insert(b, e->ino, dir, nm, e->nlen, e->type == S_IFDIR, 0);
 		if (want) {
-			const struct nfuse_attr *ca = n ? attr_get(b, e->ino, want) : NULL;
+			const struct openmacfuse_attr *ca = n ? attr_get(b, e->ino, want) : NULL;
 
 			if (ca) {
 				b->st.attr_hits++;
@@ -1927,7 +1927,7 @@ static int bf_readdir(void *ctx, nfuse_ino_t dir, uint64_t pos, uint64_t *verf,
 	return 0;
 }
 
-static int bf_access(void *ctx, nfuse_ino_t ino, int mask)
+static int bf_access(void *ctx, openmacfuse_ino_t ino, int mask)
 {
 	struct bf_ctx *b = ctx;
 	int r;
@@ -1940,7 +1940,7 @@ static int bf_access(void *ctx, nfuse_ino_t ino, int mask)
 	return b->op->access(b->path1, mask);
 }
 
-static int bf_open(void *ctx, nfuse_ino_t ino, int flags, uint64_t *fh)
+static int bf_open(void *ctx, openmacfuse_ino_t ino, int flags, uint64_t *fh)
 {
 	struct bf_ctx *b = ctx;
 	struct bf_node *n = node_find(b, ino);
@@ -1969,7 +1969,7 @@ static int bf_open(void *ctx, nfuse_ino_t ino, int flags, uint64_t *fh)
 	return 0;
 }
 
-static int bf_release(void *ctx, nfuse_ino_t ino, uint64_t fh)
+static int bf_release(void *ctx, openmacfuse_ino_t ino, uint64_t fh)
 {
 	struct bf_ctx *b = ctx;
 	struct bf_open *o = (struct bf_open *)(uintptr_t)fh;
@@ -1990,7 +1990,7 @@ static int bf_release(void *ctx, nfuse_ino_t ino, uint64_t fh)
 	return r;
 }
 
-static int bf_read(void *ctx, nfuse_ino_t ino, uint64_t fh, void *buf,
+static int bf_read(void *ctx, openmacfuse_ino_t ino, uint64_t fh, void *buf,
 		   uint32_t size, uint64_t off)
 {
 	struct bf_ctx *b = ctx;
@@ -2018,7 +2018,7 @@ static int bf_read(void *ctx, nfuse_ino_t ino, uint64_t fh, void *buf,
 	return (int)total;
 }
 
-static int bf_readlink(void *ctx, nfuse_ino_t ino, char *buf, size_t size)
+static int bf_readlink(void *ctx, openmacfuse_ino_t ino, char *buf, size_t size)
 {
 	struct bf_ctx *b = ctx;
 	int r;
@@ -2034,7 +2034,7 @@ static int bf_readlink(void *ctx, nfuse_ino_t ino, char *buf, size_t size)
 	return r;
 }
 
-static int bf_statfs(void *ctx, struct nfuse_statfs *sf)
+static int bf_statfs(void *ctx, struct openmacfuse_statfs *sf)
 {
 	struct bf_ctx *b = ctx;
 	struct statvfs sv;
@@ -2066,11 +2066,11 @@ static int bf_statfs(void *ctx, struct nfuse_statfs *sf)
 }
 
 /*
- * Named-attribute experiment (NFUSE_NAMEDATTR=2): real xattrs cannot be written on a read-only volume,
- * so every object reports one extra attribute, org.nfuse.probe = "probe-value", to observe whether the client
+ * Named-attribute experiment (OPENMACFUSE_NAMEDATTR=2): real xattrs cannot be written on a read-only volume,
+ * so every object reports one extra attribute, org.openmacfuse.probe = "probe-value", to observe whether the client
  * reads attribute values through OPENATTR / READDIR / OPEN / READ. Off in normal operation.
  */
-#define BF_PROBE_NAME	"org.nfuse.probe"
+#define BF_PROBE_NAME	"org.openmacfuse.probe"
 #define BF_PROBE_VALUE	"probe-value"
 
 
@@ -2132,14 +2132,14 @@ static int child_path_into(struct bf_ctx *b, uint64_t dir, const char *name,
 }
 
 /*
- * Write the real on-disk name under dir that is equivalent to name into real (NFUSE_KEY_MAX bytes):
+ * Write the real on-disk name under dir that is equivalent to name into real (OPENMACFUSE_KEY_MAX bytes):
  * first getattr the name as given,
  * and if that fails consult the directory name index (NFC / NFD forms are always equivalent; case too when case-insensitive).
  * Returns 0 on success with *a holding the attributes; on return path1 = directory path, path2 = directory/real name.
  * With more than one equivalent name (the volume already has a conflict): one differing from name only in form (same NFC) is preferred, otherwise the first.
  */
 static int real_name(struct bf_ctx *b, uint64_t dir, const char *name, char *real,
-		     struct nfuse_attr *a)
+		     struct openmacfuse_attr *a)
 {
 	size_t nl = strlen(name);
 	struct bf_didx *x;
@@ -2148,18 +2148,18 @@ static int real_name(struct bf_ctx *b, uint64_t dir, const char *name, char *rea
 	int r, n, i, pick = 0;
 	const char *rn;
 
-	if (nl >= NFUSE_KEY_MAX)
+	if (nl >= OPENMACFUSE_KEY_MAX)
 		return -ENAMETOOLONG;
 	r = child_path(b, dir, name);
 	if (r)
 		return r;
-	r = do_getattr(b, b->path2, NFUSE_WANT_BASIC, a);
+	r = do_getattr(b, b->path2, OPENMACFUSE_WANT_BASIC, a);
 	if (r != -ENOENT) {
 		if (r == 0)
 			memcpy(real, name, nl + 1);
 		return r;
 	}
-	if ((!b->ci && nfuse_name_is_ascii(name, nl)) || b->raw_names)
+	if ((!b->ci && openmacfuse_name_is_ascii(name, nl)) || b->raw_names)
 		return -ENOENT;		/* case-sensitive + pure ASCII: there is no other spelling */
 	x = didx_get(b, dir, b->path1);
 	if (!x)
@@ -2186,7 +2186,7 @@ static int real_name(struct bf_ctx *b, uint64_t dir, const char *name, char *rea
 	real[x->e[c[pick]].nlen] = 0;
 	r = child_path(b, dir, real);
 	if (r == 0)
-		r = do_getattr(b, b->path2, NFUSE_WANT_BASIC, a);
+		r = do_getattr(b, b->path2, OPENMACFUSE_WANT_BASIC, a);
 	if (r) {
 		didx_drop(b, dir);
 		b->st.didx_drops++;
@@ -2209,13 +2209,13 @@ static int final_name(struct bf_ctx *b, const char *name, char *fname)
 	size_t nl = strlen(name);
 	int n;
 
-	if (b->nfc && !b->raw_names && !nfuse_name_is_ascii(name, nl) &&
-	    (n = nfuse_name_nfc(name, nl, fname, NFUSE_KEY_MAX)) > 0) {
+	if (b->nfc && !b->raw_names && !openmacfuse_name_is_ascii(name, nl) &&
+	    (n = openmacfuse_name_nfc(name, nl, fname, OPENMACFUSE_KEY_MAX)) > 0) {
 		if ((size_t)n != nl || memcmp(fname, name, nl) != 0)
 			b->st.nfc_names++;
 		nl = (size_t)n;
 	} else {
-		if (nl >= NFUSE_KEY_MAX)
+		if (nl >= OPENMACFUSE_KEY_MAX)
 			return -ENAMETOOLONG;
 		memcpy(fname, name, nl + 1);
 	}
@@ -2233,7 +2233,7 @@ static int prep_new(struct bf_ctx *b, uint64_t dir, const char *name, char *fnam
 	if (r)
 		return r;
 	fl = strlen(fname);
-	if (!b->raw_names && (b->ci || !nfuse_name_is_ascii(fname, fl))) {
+	if (!b->raw_names && (b->ci || !openmacfuse_name_is_ascii(fname, fl))) {
 		struct bf_didx *x = didx_get(b, dir, b->path1);
 		uint32_t c[1];
 		long ex;
@@ -2288,7 +2288,7 @@ static void node_forget(struct bf_ctx *b, struct bf_node *n)
  * If it was the node's canonical name: re-attach the node to another hard-link name if one exists (and is known), otherwise drop the node.
  */
 static void forget_name(struct bf_ctx *b, uint64_t dir, const char *name,
-			const struct nfuse_attr *a)
+			const struct openmacfuse_attr *a)
 {
 	struct bf_node *n = node_find(b, a->ino);
 	struct bf_hint *h = hint_find(b, a->ino);
@@ -2315,10 +2315,10 @@ static void forget_name(struct bf_ctx *b, uint64_t dir, const char *name,
 
 /* A newly created object: fetch its attributes and put it in the node table (pinned for this batch) */
 static int adopt_new(struct bf_ctx *b, uint64_t dir, const char *name,
-		     struct nfuse_attr *a)
+		     struct openmacfuse_attr *a)
 {
 	struct bf_node *n;
-	int r = do_getattr(b, b->path2, NFUSE_WANT_BASIC, a);
+	int r = do_getattr(b, b->path2, OPENMACFUSE_WANT_BASIC, a);
 
 	if (r)
 		return r;
@@ -2334,12 +2334,12 @@ static int adopt_new(struct bf_ctx *b, uint64_t dir, const char *name,
 		n->nfchain = 0;
 		node_move(b, n, dir, name);
 	}
-	node_set_attr(b, n, a, NFUSE_WANT_BASIC);
+	node_set_attr(b, n, a, OPENMACFUSE_WANT_BASIC);
 	b->st.creates++;
 	return 0;
 }
 
-static int bf_write(void *ctx, nfuse_ino_t ino, uint64_t fh, const void *buf,
+static int bf_write(void *ctx, openmacfuse_ino_t ino, uint64_t fh, const void *buf,
 		    uint32_t size, uint64_t off)
 {
 	struct bf_ctx *b = ctx;
@@ -2373,7 +2373,7 @@ static int bf_write(void *ctx, nfuse_ino_t ino, uint64_t fh, const void *buf,
 	return (int)total;
 }
 
-static int bf_fsync(void *ctx, nfuse_ino_t ino, uint64_t fh, int datasync)
+static int bf_fsync(void *ctx, openmacfuse_ino_t ino, uint64_t fh, int datasync)
 {
 	struct bf_ctx *b = ctx;
 	struct bf_open *o = (struct bf_open *)(uintptr_t)fh;
@@ -2390,14 +2390,14 @@ static int bf_fsync(void *ctx, nfuse_ino_t ino, uint64_t fh, int datasync)
 	return b->op->fsync(b->path1, datasync, o ? &o->fi : &tmp);
 }
 
-static int bf_create(void *ctx, nfuse_ino_t dir, const char *oname, uint32_t mode,
-		     int flags, nfuse_ino_t *ino, uint64_t *fh)
+static int bf_create(void *ctx, openmacfuse_ino_t dir, const char *oname, uint32_t mode,
+		     int flags, openmacfuse_ino_t *ino, uint64_t *fh)
 {
 	struct bf_ctx *b = ctx;
 	struct bf_open *o;
 	struct bf_node *n;
-	struct nfuse_attr a;
-	char name[NFUSE_KEY_MAX];
+	struct openmacfuse_attr a;
+	char name[OPENMACFUSE_KEY_MAX];
 	int r = prep_new(b, dir, oname, name);
 
 	if (r)
@@ -2441,12 +2441,12 @@ static int bf_create(void *ctx, nfuse_ino_t dir, const char *oname, uint32_t mod
 	return 0;
 }
 
-static int bf_mkdir(void *ctx, nfuse_ino_t dir, const char *oname, uint32_t mode,
-		    nfuse_ino_t *ino)
+static int bf_mkdir(void *ctx, openmacfuse_ino_t dir, const char *oname, uint32_t mode,
+		    openmacfuse_ino_t *ino)
 {
 	struct bf_ctx *b = ctx;
-	struct nfuse_attr a;
-	char name[NFUSE_KEY_MAX];
+	struct openmacfuse_attr a;
+	char name[OPENMACFUSE_KEY_MAX];
 	int r = prep_new(b, dir, oname, name);
 
 	if (r)
@@ -2467,12 +2467,12 @@ static int bf_mkdir(void *ctx, nfuse_ino_t dir, const char *oname, uint32_t mode
 	return 0;
 }
 
-static int bf_symlink(void *ctx, nfuse_ino_t dir, const char *oname,
-		      const char *target, nfuse_ino_t *ino)
+static int bf_symlink(void *ctx, openmacfuse_ino_t dir, const char *oname,
+		      const char *target, openmacfuse_ino_t *ino)
 {
 	struct bf_ctx *b = ctx;
-	struct nfuse_attr a;
-	char name[NFUSE_KEY_MAX];
+	struct openmacfuse_attr a;
+	char name[OPENMACFUSE_KEY_MAX];
 	int r = prep_new(b, dir, oname, name);
 
 	if (r)
@@ -2493,12 +2493,12 @@ static int bf_symlink(void *ctx, nfuse_ino_t dir, const char *oname,
 	return 0;
 }
 
-static int bf_mknod(void *ctx, nfuse_ino_t dir, const char *oname, uint32_t mode,
-		    uint64_t rdev, nfuse_ino_t *ino)
+static int bf_mknod(void *ctx, openmacfuse_ino_t dir, const char *oname, uint32_t mode,
+		    uint64_t rdev, openmacfuse_ino_t *ino)
 {
 	struct bf_ctx *b = ctx;
-	struct nfuse_attr a;
-	char name[NFUSE_KEY_MAX];
+	struct openmacfuse_attr a;
+	char name[OPENMACFUSE_KEY_MAX];
 	int r = prep_new(b, dir, oname, name);
 
 	if (r)
@@ -2519,12 +2519,12 @@ static int bf_mknod(void *ctx, nfuse_ino_t dir, const char *oname, uint32_t mode
 	return 0;
 }
 
-static int bf_link(void *ctx, nfuse_ino_t ino, nfuse_ino_t newdir,
+static int bf_link(void *ctx, openmacfuse_ino_t ino, openmacfuse_ino_t newdir,
 		   const char *oname)
 {
 	struct bf_ctx *b = ctx;
 	struct bf_node *n;
-	char newname[NFUSE_KEY_MAX];
+	char newname[OPENMACFUSE_KEY_MAX];
 	int r;
 
 	if (!b->op->link || b->synth)
@@ -2554,7 +2554,7 @@ static int bf_link(void *ctx, nfuse_ino_t ino, nfuse_ino_t newdir,
 
 /* Remove the real name rn under dir (a holds the attributes from before the removal) */
 static int do_remove(struct bf_ctx *b, uint64_t dir, const char *rn,
-		     const struct nfuse_attr *a)
+		     const struct openmacfuse_attr *a)
 {
 	int r = child_path(b, dir, rn);
 
@@ -2567,7 +2567,7 @@ static int do_remove(struct bf_ctx *b, uint64_t dir, const char *rn,
 	if (r)
 		return r;
 	if (b->synth)
-		nfuse_synth_drop(b->synth, b->path2, S_ISDIR(a->mode));
+		openmacfuse_synth_drop(b->synth, b->path2, S_ISDIR(a->mode));
 	forget_name(b, dir, rn, a);
 	dir_changed(b, dir);
 	didx_note_del(b, dir, rn);
@@ -2582,13 +2582,13 @@ static int is_ad_name(const char *n)
 	return n[0] == '.' && n[1] == '_' && n[2];
 }
 
-static int ad_path(struct bf_ctx *b, uint64_t dir, const char *name, struct nfuse_attr *a);
+static int ad_path(struct bf_ctx *b, uint64_t dir, const char *name, struct openmacfuse_attr *a);
 
 /* X (real name xn under dir) has been removed: on the named-attribute channel its `._X` is removed with it */
 static void ad_follow_remove(struct bf_ctx *b, uint64_t dir, const char *xn)
 {
-	char adn[NFUSE_KEY_MAX + 2];
-	struct nfuse_attr ada;
+	char adn[OPENMACFUSE_KEY_MAX + 2];
+	struct openmacfuse_attr ada;
 
 	if (!b->adtrans || is_ad_name(xn) || ad_path(b, dir, xn, &ada))
 		return;
@@ -2599,11 +2599,11 @@ static void ad_follow_remove(struct bf_ctx *b, uint64_t dir, const char *xn)
 	}
 }
 
-static int bf_remove(void *ctx, nfuse_ino_t dir, const char *name)
+static int bf_remove(void *ctx, openmacfuse_ino_t dir, const char *name)
 {
 	struct bf_ctx *b = ctx;
-	struct nfuse_attr a;
-	char rn[NFUSE_KEY_MAX];
+	struct openmacfuse_attr a;
+	char rn[OPENMACFUSE_KEY_MAX];
 	int r = real_name(b, dir, name, rn, &a);
 
 	if (r)
@@ -2619,7 +2619,7 @@ static int bf_remove(void *ctx, nfuse_ino_t dir, const char *name)
 static int do_rename(struct bf_ctx *b, uint64_t olddir, const char *oldname,
 		     uint64_t newdir, const char *newname)
 {
-	struct nfuse_attr sa, da;
+	struct openmacfuse_attr sa, da;
 	struct bf_node *x, *p;
 	int r, dst_exists, canonical;
 
@@ -2631,10 +2631,10 @@ static int do_rename(struct bf_ctx *b, uint64_t olddir, const char *oldname,
 	r = child_path_into(b, newdir, newname, b->path2);
 	if (r)
 		return r;
-	r = do_getattr(b, b->path3, NFUSE_WANT_BASIC, &sa);
+	r = do_getattr(b, b->path3, OPENMACFUSE_WANT_BASIC, &sa);
 	if (r)
 		return r;
-	dst_exists = do_getattr(b, b->path2, NFUSE_WANT_BASIC, &da) == 0;
+	dst_exists = do_getattr(b, b->path2, OPENMACFUSE_WANT_BASIC, &da) == 0;
 	if (dst_exists && da.ino == sa.ino && sa.ino) {
 		/*
 		 * Two names for the same file: POSIX says do nothing. Exception: a rename within one directory
@@ -2666,7 +2666,7 @@ static int do_rename(struct bf_ctx *b, uint64_t olddir, const char *oldname,
 	if (r)
 		return r;
 	if (b->synth)
-		nfuse_synth_rename(b->synth, b->path3, b->path2);	/* numbers follow the path, handles stay valid */
+		openmacfuse_synth_rename(b->synth, b->path3, b->path2);	/* numbers follow the path, handles stay valid */
 	if (dst_exists)
 		forget_name(b, newdir, newname, &da);	/* the target was overwritten */
 	{
@@ -2704,8 +2704,8 @@ static int do_rename(struct bf_ctx *b, uint64_t olddir, const char *oldname,
 static void ad_follow_rename(struct bf_ctx *b, uint64_t olddir, const char *on,
 			     uint64_t newdir, const char *nn)
 {
-	char oad[NFUSE_KEY_MAX + 2], nad[NFUSE_KEY_MAX + 2];
-	struct nfuse_attr ada;
+	char oad[OPENMACFUSE_KEY_MAX + 2], nad[OPENMACFUSE_KEY_MAX + 2];
+	struct openmacfuse_attr ada;
 
 	if (!b->adtrans || is_ad_name(on) || is_ad_name(nn))
 		return;
@@ -2729,12 +2729,12 @@ static void ad_follow_rename(struct bf_ctx *b, uint64_t olddir, const char *on,
  *   - it is the source itself (same directory, only case / form changes): just rename;
  *   - it is another object: overwrite it first (rename onto its real name, an atomic replace), then rename to the new spelling.
  */
-static int bf_rename(void *ctx, nfuse_ino_t olddir, const char *oldname,
-		     nfuse_ino_t newdir, const char *newname)
+static int bf_rename(void *ctx, openmacfuse_ino_t olddir, const char *oldname,
+		     openmacfuse_ino_t newdir, const char *newname)
 {
 	struct bf_ctx *b = ctx;
-	char oreal[NFUSE_KEY_MAX], nfinal[NFUSE_KEY_MAX], treal[NFUSE_KEY_MAX];
-	struct nfuse_attr sa, ta;
+	char oreal[OPENMACFUSE_KEY_MAX], nfinal[OPENMACFUSE_KEY_MAX], treal[OPENMACFUSE_KEY_MAX];
+	struct openmacfuse_attr sa, ta;
 	int r;
 
 	if (!b->op->rename)
@@ -2778,39 +2778,39 @@ static int bf_rename(void *ctx, nfuse_ino_t olddir, const char *oldname,
 	return r;
 }
 
-static int bf_setattr(void *ctx, nfuse_ino_t ino, uint64_t fh,
-		      const struct nfuse_sattr *sa)
+static int bf_setattr(void *ctx, openmacfuse_ino_t ino, uint64_t fh,
+		      const struct openmacfuse_sattr *sa)
 {
 	struct bf_ctx *b = ctx;
 	struct bf_open *o = (struct bf_open *)(uintptr_t)fh;
 	struct bf_node *n = node_find(b, ino);
-	struct nfuse_attr cur;
+	struct openmacfuse_attr cur;
 	int r = path_of(b, ino, b->path1), have_cur = 0;
 
 	if (r < 0)
 		return r;
 	/* Only one of owner / group given, only one time given, or flags being changed: the current values are needed to fill in the rest */
-	if (((sa->mask & (NFUSE_SA_UID | NFUSE_SA_GID)) &&
-	     (sa->mask & (NFUSE_SA_UID | NFUSE_SA_GID)) != (NFUSE_SA_UID | NFUSE_SA_GID)) ||
-	    ((sa->mask & (NFUSE_SA_ATIME | NFUSE_SA_ATIME_NOW | NFUSE_SA_MTIME | NFUSE_SA_MTIME_NOW)) &&
-	     (!(sa->mask & (NFUSE_SA_ATIME | NFUSE_SA_ATIME_NOW)) ||
-	      !(sa->mask & (NFUSE_SA_MTIME | NFUSE_SA_MTIME_NOW)))) ||
-	    (sa->mask & NFUSE_SA_FLAGS)) {
-		r = do_getattr(b, b->path1, NFUSE_WANT_BASIC, &cur);
+	if (((sa->mask & (OPENMACFUSE_SA_UID | OPENMACFUSE_SA_GID)) &&
+	     (sa->mask & (OPENMACFUSE_SA_UID | OPENMACFUSE_SA_GID)) != (OPENMACFUSE_SA_UID | OPENMACFUSE_SA_GID)) ||
+	    ((sa->mask & (OPENMACFUSE_SA_ATIME | OPENMACFUSE_SA_ATIME_NOW | OPENMACFUSE_SA_MTIME | OPENMACFUSE_SA_MTIME_NOW)) &&
+	     (!(sa->mask & (OPENMACFUSE_SA_ATIME | OPENMACFUSE_SA_ATIME_NOW)) ||
+	      !(sa->mask & (OPENMACFUSE_SA_MTIME | OPENMACFUSE_SA_MTIME_NOW)))) ||
+	    (sa->mask & OPENMACFUSE_SA_FLAGS)) {
+		r = do_getattr(b, b->path1, OPENMACFUSE_WANT_BASIC, &cur);
 		if (r)
 			return r;
 		have_cur = 1;
 	}
-	if (sa->mask & NFUSE_SA_MODE) {
+	if (sa->mask & OPENMACFUSE_SA_MODE) {
 		if (!b->op->chmod)
 			return -ENOTSUP;
 		r = b->op->chmod(b->path1, (mode_t)(sa->mode & 07777));
 		if (r)
 			return r;
 	}
-	if (sa->mask & (NFUSE_SA_UID | NFUSE_SA_GID)) {
-		uid_t uid = (sa->mask & NFUSE_SA_UID) ? (uid_t)sa->uid : (uid_t)cur.uid;
-		gid_t gid = (sa->mask & NFUSE_SA_GID) ? (gid_t)sa->gid : (gid_t)cur.gid;
+	if (sa->mask & (OPENMACFUSE_SA_UID | OPENMACFUSE_SA_GID)) {
+		uid_t uid = (sa->mask & OPENMACFUSE_SA_UID) ? (uid_t)sa->uid : (uid_t)cur.uid;
+		gid_t gid = (sa->mask & OPENMACFUSE_SA_GID) ? (gid_t)sa->gid : (gid_t)cur.gid;
 
 		if (!b->op->chown)
 			return -ENOTSUP;
@@ -2818,7 +2818,7 @@ static int bf_setattr(void *ctx, nfuse_ino_t ino, uint64_t fh,
 		if (r)
 			return r;
 	}
-	if (sa->mask & NFUSE_SA_SIZE) {
+	if (sa->mask & OPENMACFUSE_SA_SIZE) {
 		if (o && b->op->ftruncate)
 			r = b->op->ftruncate(b->path1, (off_t)sa->size, &o->fi);
 		else if (b->op->truncate)
@@ -2828,15 +2828,15 @@ static int bf_setattr(void *ctx, nfuse_ino_t ino, uint64_t fh,
 		if (r)
 			return r;
 	}
-	if (sa->mask & (NFUSE_SA_ATIME | NFUSE_SA_ATIME_NOW | NFUSE_SA_MTIME |
-			NFUSE_SA_MTIME_NOW)) {
+	if (sa->mask & (OPENMACFUSE_SA_ATIME | OPENMACFUSE_SA_ATIME_NOW | OPENMACFUSE_SA_MTIME |
+			OPENMACFUSE_SA_MTIME_NOW)) {
 		struct timespec tv[2], now;
 
 		clock_gettime(CLOCK_REALTIME, &now);
-		tv[0] = (sa->mask & NFUSE_SA_ATIME) ? sa->atime :
-			(sa->mask & NFUSE_SA_ATIME_NOW) ? now : cur.atime;
-		tv[1] = (sa->mask & NFUSE_SA_MTIME) ? sa->mtime :
-			(sa->mask & NFUSE_SA_MTIME_NOW) ? now : cur.mtime;
+		tv[0] = (sa->mask & OPENMACFUSE_SA_ATIME) ? sa->atime :
+			(sa->mask & OPENMACFUSE_SA_ATIME_NOW) ? now : cur.atime;
+		tv[1] = (sa->mask & OPENMACFUSE_SA_MTIME) ? sa->mtime :
+			(sa->mask & OPENMACFUSE_SA_MTIME_NOW) ? now : cur.mtime;
 		(void)have_cur;
 		if (b->op->utimens) {
 			r = b->op->utimens(b->path1, tv);
@@ -2849,21 +2849,21 @@ static int bf_setattr(void *ctx, nfuse_ino_t ino, uint64_t fh,
 		if (r)
 			return r;
 	}
-	if (sa->mask & NFUSE_SA_CRTIME) {
+	if (sa->mask & OPENMACFUSE_SA_CRTIME) {
 		if (!b->op->setcrtime)
 			return -ENOTSUP;
 		r = b->op->setcrtime(b->path1, &sa->crtime);
 		if (r)
 			return r;
 	}
-	if (sa->mask & NFUSE_SA_BKUPTIME) {
+	if (sa->mask & OPENMACFUSE_SA_BKUPTIME) {
 		if (!b->op->setbkuptime)
 			return -ENOTSUP;
 		r = b->op->setbkuptime(b->path1, &sa->bkuptime);
 		if (r)
 			return r;
 	}
-	if (sa->mask & NFUSE_SA_FLAGS) {
+	if (sa->mask & OPENMACFUSE_SA_FLAGS) {
 		uint32_t nf = (cur.flags | sa->flags_set) & ~sa->flags_clear;
 
 		/*
@@ -2891,7 +2891,7 @@ static int bf_setattr(void *ctx, nfuse_ino_t ino, uint64_t fh,
 	return 0;
 }
 
-static void bf_invalidate(void *ctx, nfuse_ino_t ino)
+static void bf_invalidate(void *ctx, openmacfuse_ino_t ino)
 {
 	attr_drop(ctx, ino);
 }
@@ -2902,11 +2902,11 @@ static void bf_invalidate(void *ctx, nfuse_ino_t ino)
  * The `._X` of X (real name name under dir): its path is written into path4; returns 0 if it exists and is a regular file (*a holds its attributes).
  * If the directory name index is there it is consulted first (if the name is absent there is no need to ask the file system).
  */
-static int ad_path(struct bf_ctx *b, uint64_t dir, const char *name, struct nfuse_attr *a)
+static int ad_path(struct bf_ctx *b, uint64_t dir, const char *name, struct openmacfuse_attr *a)
 {
 	struct bf_node *d = node_find(b, dir);
 	struct bf_didx *x;
-	char adn[NFUSE_KEY_MAX + 2];
+	char adn[OPENMACFUSE_KEY_MAX + 2];
 	size_t al;
 	int len;
 
@@ -2932,7 +2932,7 @@ static int ad_path(struct bf_ctx *b, uint64_t dir, const char *name, struct nfus
 	len = join_path(b->path4, b->path4, len, adn, al);
 	if (len < 0)
 		return len;
-	if (do_getattr(b, b->path4, NFUSE_WANT_BASIC, a) || !S_ISREG(a->mode))
+	if (do_getattr(b, b->path4, OPENMACFUSE_WANT_BASIC, a) || !S_ISREG(a->mode))
 		return -ENOENT;
 	return 0;
 }
@@ -2973,7 +2973,7 @@ static void ad_close(struct bf_ctx *b, struct ad_rd *r)
 }
 
 /* Parsed form of the `._X` at path4 (attributes ada); cached by inode + size + mtime. Returns NULL if it is not AppleDouble */
-static const struct nfuse_ad *ad_get(struct bf_ctx *b, const struct nfuse_attr *ada)
+static const struct openmacfuse_ad *ad_get(struct bf_ctx *b, const struct openmacfuse_attr *ada)
 {
 	struct bf_adc *sl, *old = &b->adc[0];
 	struct ad_rd rd;
@@ -2991,11 +2991,11 @@ static const struct nfuse_ad *ad_get(struct bf_ctx *b, const struct nfuse_attr *
 			old = c;
 	}
 	sl = old;
-	nfuse_ad_free(&sl->ad);
+	openmacfuse_ad_free(&sl->ad);
 	sl->adino = 0;
 	if (ad_open(b, &rd))
 		return NULL;
-	r = nfuse_ad_parse(ad_read_cb, &rd, ada->size, &sl->ad);
+	r = openmacfuse_ad_parse(ad_read_cb, &rd, ada->size, &sl->ad);
 	ad_close(b, &rd);
 	b->st.ad_parsed++;
 	if (r) {
@@ -3015,13 +3015,13 @@ static void ad_forget(struct bf_ctx *b, uint64_t adino)
 
 	for (i = 0; i < BF_ADC_SLOTS; i++)
 		if (b->adc[i].adino == adino) {
-			nfuse_ad_free(&b->adc[i].ad);
+			openmacfuse_ad_free(&b->adc[i].ad);
 			b->adc[i].adino = 0;
 		}
 }
 
 /* Read [off, off+size) of an attribute value from the `._X` at path4 */
-static int ad_read_val(struct bf_ctx *b, const struct nfuse_ad_attr *at, void *buf,
+static int ad_read_val(struct bf_ctx *b, const struct openmacfuse_ad_attr *at, void *buf,
 		       uint32_t size, uint64_t off)
 {
 	struct ad_rd rd;
@@ -3225,9 +3225,9 @@ static int xpath(struct bf_ctx *b, uint64_t ino, struct bf_node **np)
  * (the marker used when ad_clean=0). path4 = path of `._X`, path5 = path of X (the caller runs xpath first).
  * fs_has_marker < 0 means the marker has not been checked yet.
  */
-static const struct nfuse_ad *ad_for(struct bf_ctx *b, struct bf_node *n, int fs_has_marker)
+static const struct openmacfuse_ad *ad_for(struct bf_ctx *b, struct bf_node *n, int fs_has_marker)
 {
-	struct nfuse_attr ada;
+	struct openmacfuse_attr ada;
 
 	if (!b->adtrans || !n || n->ino == b->root || !n->name)
 		return NULL;
@@ -3249,11 +3249,11 @@ static const struct nfuse_ad *ad_for(struct bf_ctx *b, struct bf_node *n, int fs
  */
 static int ad_migrate(struct bf_ctx *b, struct bf_node *n)
 {
-	const struct nfuse_ad *ad0 = ad_for(b, n, -1);
-	struct nfuse_ad ad;
-	struct nfuse_attr ada;
+	const struct openmacfuse_ad *ad0 = ad_for(b, n, -1);
+	struct openmacfuse_ad ad;
+	struct openmacfuse_attr ada;
 	uint64_t adino, parent;
-	char adn[NFUSE_KEY_MAX + 2], xn[NFUSE_KEY_MAX], *buf;
+	char adn[OPENMACFUSE_KEY_MAX + 2], xn[OPENMACFUSE_KEY_MAX], *buf;
 	uint32_t i;
 	int r = 0;
 
@@ -3268,14 +3268,14 @@ static int ad_migrate(struct bf_ctx *b, struct bf_node *n)
 		ad.a[i] = ad0->a[i];
 		ad.a[i].name = strdup(ad0->a[i].name);
 		if (!ad.a[i].name) {
-			nfuse_ad_free(&ad);
+			openmacfuse_ad_free(&ad);
 			return -ENOMEM;
 		}
 		ad.n = i + 1;
 	}
 	buf = malloc(256 * 1024);
 	if (!buf) {
-		nfuse_ad_free(&ad);
+		openmacfuse_ad_free(&ad);
 		return -ENOMEM;
 	}
 	for (i = 0; i < ad.n && r >= 0; i++) {
@@ -3298,7 +3298,7 @@ static int ad_migrate(struct bf_ctx *b, struct bf_node *n)
 			b->st.ad_migrated_attrs++;
 	}
 	free(buf);
-	nfuse_ad_free(&ad);
+	openmacfuse_ad_free(&ad);
 	if (r < 0) {
 		if (b->log)
 			b->log("migrating the `._` attributes of %s failed: errno %d (`._` kept, will retry next time)", b->path5, -r);
@@ -3333,11 +3333,11 @@ static int list_has(const char *fl, int fn, const char *name)
 	return 0;
 }
 
-static int bf_listxattr(void *ctx, nfuse_ino_t ino, char *buf, size_t size)
+static int bf_listxattr(void *ctx, openmacfuse_ino_t ino, char *buf, size_t size)
 {
 	struct bf_ctx *b = ctx;
 	struct bf_node *n;
-	const struct nfuse_ad *ad;
+	const struct openmacfuse_ad *ad;
 	char *fl = NULL, *p;
 	size_t total = 0, o = 0;
 	int fn = 0, r, marker;
@@ -3400,13 +3400,13 @@ static int bf_listxattr(void *ctx, nfuse_ino_t ino, char *buf, size_t size)
 	return (int)o;
 }
 
-static int bf_getxattr(void *ctx, nfuse_ino_t ino, const char *name, void *buf,
+static int bf_getxattr(void *ctx, openmacfuse_ino_t ino, const char *name, void *buf,
 		       size_t size)
 {
 	struct bf_ctx *b = ctx;
 	struct bf_node *n;
-	const struct nfuse_ad *ad;
-	const struct nfuse_ad_attr *at;
+	const struct openmacfuse_ad *ad;
+	const struct openmacfuse_ad_attr *at;
 	int r;
 
 	if (b->fake_xattr && strcmp(name, BF_PROBE_NAME) == 0) {
@@ -3426,7 +3426,7 @@ static int bf_getxattr(void *ctx, nfuse_ino_t ino, const char *name, void *buf,
 	if (r != -ENOATTR && r != -ENOTSUP && r != -EOPNOTSUPP)
 		return r;
 	ad = ad_for(b, n, -1);
-	at = ad ? nfuse_ad_find(ad, name) : NULL;
+	at = ad ? openmacfuse_ad_find(ad, name) : NULL;
 	if (!at) {
 		int vl = virt_len(b, n, name);
 
@@ -3446,13 +3446,13 @@ static int bf_getxattr(void *ctx, nfuse_ino_t ino, const char *name, void *buf,
 	return ad_read_val(b, at, buf, (uint32_t)at->len, 0);
 }
 
-static int bf_xattr_read(void *ctx, nfuse_ino_t ino, const char *name, void *buf,
+static int bf_xattr_read(void *ctx, openmacfuse_ino_t ino, const char *name, void *buf,
 			 uint32_t size, uint64_t off)
 {
 	struct bf_ctx *b = ctx;
 	struct bf_node *n;
-	const struct nfuse_ad *ad;
-	const struct nfuse_ad_attr *at;
+	const struct openmacfuse_ad *ad;
+	const struct openmacfuse_ad_attr *at;
 	int r;
 
 	if (b->fake_xattr && strcmp(name, BF_PROBE_NAME) == 0) {
@@ -3478,7 +3478,7 @@ static int bf_xattr_read(void *ctx, nfuse_ino_t ino, const char *name, void *buf
 	if (r != -ENOATTR && r != -ENOTSUP && r != -EOPNOTSUPP)
 		return r;
 	ad = ad_for(b, n, -1);
-	at = ad ? nfuse_ad_find(ad, name) : NULL;
+	at = ad ? openmacfuse_ad_find(ad, name) : NULL;
 	if (!at) {
 		int vl = virt_len(b, n, name);
 
@@ -3495,7 +3495,7 @@ static int bf_xattr_read(void *ctx, nfuse_ino_t ino, const char *name, void *buf
 }
 
 /* Common preamble for modifying attributes: path into path5, migrate `._X` first */
-static int xa_prep(struct bf_ctx *b, nfuse_ino_t ino, const char *name)
+static int xa_prep(struct bf_ctx *b, openmacfuse_ino_t ino, const char *name)
 {
 	struct bf_node *n;
 	int r;
@@ -3511,7 +3511,7 @@ static int xa_prep(struct bf_ctx *b, nfuse_ino_t ino, const char *name)
 	return xpath(b, ino, NULL);
 }
 
-static void xa_changed(struct bf_ctx *b, nfuse_ino_t ino)
+static void xa_changed(struct bf_ctx *b, openmacfuse_ino_t ino)
 {
 	struct bf_node *n = node_find(b, ino);
 
@@ -3520,7 +3520,7 @@ static void xa_changed(struct bf_ctx *b, nfuse_ino_t ino)
 		n->gen++;
 }
 
-static int bf_xattr_write(void *ctx, nfuse_ino_t ino, const char *name, const void *buf,
+static int bf_xattr_write(void *ctx, openmacfuse_ino_t ino, const char *name, const void *buf,
 			  uint32_t size, uint64_t off)
 {
 	struct bf_ctx *b = ctx;
@@ -3537,7 +3537,7 @@ static int bf_xattr_write(void *ctx, nfuse_ino_t ino, const char *name, const vo
 	return r;
 }
 
-static int bf_xattr_truncate(void *ctx, nfuse_ino_t ino, const char *name, uint64_t size)
+static int bf_xattr_truncate(void *ctx, openmacfuse_ino_t ino, const char *name, uint64_t size)
 {
 	struct bf_ctx *b = ctx;
 	int r = xa_prep(b, ino, name);
@@ -3554,7 +3554,7 @@ static int bf_xattr_truncate(void *ctx, nfuse_ino_t ino, const char *name, uint6
 	return r < 0 ? r : 0;
 }
 
-static int bf_removexattr(void *ctx, nfuse_ino_t ino, const char *name)
+static int bf_removexattr(void *ctx, openmacfuse_ino_t ino, const char *name)
 {
 	struct bf_ctx *b = ctx;
 	int r = xa_prep(b, ino, name);
@@ -3573,7 +3573,7 @@ static int bf_removexattr(void *ctx, nfuse_ino_t ino, const char *name)
 	return r;
 }
 
-static const struct nfuse_backend_ops bf_ops = {
+static const struct openmacfuse_backend_ops bf_ops = {
 	.root		= bf_root,
 	.begin		= bf_begin,
 	.resolve	= bf_resolve,
@@ -3607,14 +3607,14 @@ static const struct nfuse_backend_ops bf_ops = {
 	.removexattr	= bf_removexattr,
 };
 
-int nfuse_backend_fuse_init(struct nfuse_backend *be,
+int openmacfuse_backend_fuse_init(struct openmacfuse_backend *be,
 			   const struct fuse_operations *op,
 			   struct fuse_context *fctx,
-			   const struct nfuse_bf_config *cfg)
+			   const struct openmacfuse_bf_config *cfg)
 {
 	struct bf_ctx *b;
 	struct bf_node *root;
-	struct nfuse_attr a;
+	struct openmacfuse_attr a;
 	size_t hs = 1024;
 	int r;
 
@@ -3660,7 +3660,7 @@ int nfuse_backend_fuse_init(struct nfuse_backend *be,
 	}
 	fctx->uid = getuid();
 	fctx->gid = getgid();
-	r = do_getattr(b, "/", NFUSE_WANT_BASIC, &a);
+	r = do_getattr(b, "/", OPENMACFUSE_WANT_BASIC, &a);
 	if (r)
 		goto err;
 	if (!S_ISDIR(a.mode)) {
@@ -3677,12 +3677,12 @@ int nfuse_backend_fuse_init(struct nfuse_backend *be,
 	 * with 1 for the root directory (on such file systems every LOOKUP used to return an I/O error and directory listings were empty)
 	 */
 	if (a.ino == 0) {
-		b->synth = nfuse_synth_new();
+		b->synth = openmacfuse_synth_new();
 		if (!b->synth) {
 			r = -ENOMEM;
 			goto err;
 		}
-		a.ino = nfuse_synth_get(b->synth, "/");
+		a.ino = openmacfuse_synth_get(b->synth, "/");
 		if (b->log)
 			b->log("the file system provides no inode numbers (st_ino is 0): assigning inode numbers by path");
 	}
@@ -3694,14 +3694,14 @@ int nfuse_backend_fuse_init(struct nfuse_backend *be,
 	root->hnext = NULL;
 	b->ht[mix64(root->ino) & b->htmask] = root;
 	b->nnodes = 1;
-	cache_attr(b, root, &a, NFUSE_WANT_BASIC);
+	cache_attr(b, root, &a, OPENMACFUSE_WANT_BASIC);
 	be->ops = &bf_ops;
 	be->ctx = b;
 	/* Read-only if the file system has no write callback; the ro mount option is applied separately by the caller */
 	be->readonly = op->write == NULL;
 	return 0;
 err:
-	nfuse_synth_free(b->synth);
+	openmacfuse_synth_free(b->synth);
 	free(b->ht);
 	free(b->path1);
 	free(b->path2);
@@ -3714,14 +3714,14 @@ err:
 	return r;
 }
 
-void nfuse_backend_fuse_free(struct nfuse_backend *be)
+void openmacfuse_backend_fuse_free(struct openmacfuse_backend *be)
 {
 	struct bf_ctx *b = be->ctx;
 	size_t i;
 
 	if (!b)
 		return;
-	nfuse_synth_free(b->synth);
+	openmacfuse_synth_free(b->synth);
 	b->synth = NULL;
 	for (i = 0; i <= b->htmask; i++) {
 		struct bf_node *n = b->ht[i], *nx;
@@ -3740,7 +3740,7 @@ void nfuse_backend_fuse_free(struct nfuse_backend *be)
 	free(b->path5);
 	didx_drop_all(b);
 	for (i = 0; i < BF_ADC_SLOTS; i++)
-		nfuse_ad_free(&b->adc[i].ad);
+		openmacfuse_ad_free(&b->adc[i].ad);
 	while (b->snaps) {
 		struct bf_snap *s = b->snaps;
 		b->snaps = s->next;
@@ -3754,7 +3754,7 @@ void nfuse_backend_fuse_free(struct nfuse_backend *be)
 	be->ctx = NULL;
 }
 
-void nfuse_backend_fuse_stats(struct nfuse_backend *be, char *buf, size_t n)
+void openmacfuse_backend_fuse_stats(struct openmacfuse_backend *be, char *buf, size_t n)
 {
 	struct bf_ctx *b = be->ctx;
 
@@ -3796,7 +3796,7 @@ void nfuse_backend_fuse_stats(struct nfuse_backend *be, char *buf, size_t n)
 		 (unsigned long long)b->st.stale_ino);
 }
 
-void nfuse_backend_fuse_stats_m3(struct nfuse_backend *be, char *buf, size_t n)
+void openmacfuse_backend_fuse_stats_m3(struct openmacfuse_backend *be, char *buf, size_t n)
 {
 	struct bf_ctx *b = be->ctx;
 
@@ -3847,7 +3847,7 @@ void nfuse_backend_fuse_stats_m3(struct nfuse_backend *be, char *buf, size_t n)
 		 (unsigned long long)b->st.fi_virtual);
 }
 
-void nfuse_backend_fuse_set_case(struct nfuse_backend *be, int insensitive)
+void openmacfuse_backend_fuse_set_case(struct openmacfuse_backend *be, int insensitive)
 {
 	struct bf_ctx *b = be->ctx;
 
@@ -3878,7 +3878,7 @@ struct scan_dir {
 static int scan_filler(void *buf, const char *name, const struct stat *st, off_t off)
 {
 	struct scan_dir *d = buf;
-	char key[NFUSE_KEY_MAX];
+	char key[OPENMACFUSE_KEY_MAX];
 	size_t l;
 	int kl;
 
@@ -3914,7 +3914,7 @@ static int scan_filler(void *buf, const char *name, const struct stat *st, off_t
 		d->ncap = nc;
 	}
 	kl = name_key(d->b, name, l, key);
-	d->e[d->n].h = nfuse_hash_bytes(key, (size_t)kl);
+	d->e[d->n].h = openmacfuse_hash_bytes(key, (size_t)kl);
 	d->e[d->n].noff = (uint32_t)d->nlen;
 	d->e[d->n].nlen = (uint16_t)l;
 	d->e[d->n].isdir = st && S_ISDIR(st->st_mode);
@@ -3931,8 +3931,8 @@ static int scan_cmp(const void *a, const void *b2)
 	return x->h < y->h ? -1 : x->h > y->h;
 }
 
-int nfuse_backend_fuse_case_scan(struct nfuse_backend *be, uint32_t budget_ms,
-				 struct nfuse_case_scan *out)
+int openmacfuse_backend_fuse_case_scan(struct openmacfuse_backend *be, uint32_t budget_ms,
+				 struct openmacfuse_case_scan *out)
 {
 	struct bf_ctx *b = be->ctx;
 	char **q = NULL;
@@ -3989,7 +3989,7 @@ int nfuse_backend_fuse_case_scan(struct nfuse_backend *be, uint32_t budget_ms,
 		for (i = 0; i < d.n; i = j) {
 			for (j = i + 1; j < d.n && d.e[j].h == d.e[i].h; j++) {
 				const char *a = d.names + d.e[i].noff, *c = d.names + d.e[j].noff;
-				char k1[NFUSE_KEY_MAX], k2[NFUSE_KEY_MAX];
+				char k1[OPENMACFUSE_KEY_MAX], k2[OPENMACFUSE_KEY_MAX];
 				int l1 = name_key(b, a, d.e[i].nlen, k1);
 				int l2 = name_key(b, c, d.e[j].nlen, k2);
 

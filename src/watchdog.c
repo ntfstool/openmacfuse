@@ -33,7 +33,7 @@
 
 #include "watchdog.h"
 
-uint64_t nfuse_uptime_ns(void)
+uint64_t openmacfuse_uptime_ns(void)
 {
 	return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
 }
@@ -95,8 +95,8 @@ static uint64_t wall_ms(void)
 	return (uint64_t)tv.tv_sec * 1000 + (uint64_t)tv.tv_usec / 1000;
 }
 
-/* Same format as the log lines of fuse_lib.c: HH:MM:SS.mmm [nfuse-guard PID] text */
-static void glog(const struct nfuse_guard_cfg *c, struct gbuf *msg)
+/* Same format as the log lines of fuse_lib.c: HH:MM:SS.mmm [openmacfuse-guard PID] text */
+static void glog(const struct openmacfuse_guard_cfg *c, struct gbuf *msg)
 {
 	struct gbuf g;
 	uint64_t ms = wall_ms();
@@ -116,7 +116,7 @@ static void glog(const struct nfuse_guard_cfg *c, struct gbuf *msg)
 	if (ms % 1000 < 10)
 		gb_s(&g, "0");
 	gb_u(&g, ms % 1000);
-	gb_s(&g, " [nfuse-guard ");
+	gb_s(&g, " [openmacfuse-guard ");
 	gb_u(&g, (uint64_t)getpid());
 	gb_s(&g, "] ");
 	msg->b[msg->n] = 0;
@@ -126,7 +126,7 @@ static void glog(const struct nfuse_guard_cfg *c, struct gbuf *msg)
 }
 
 /* One JSON telemetry line (same field names as the driver telemetry: ts / pid / role / seq / type) */
-static void greport(const struct nfuse_guard_cfg *c, const char *what, int mounted,
+static void greport(const struct openmacfuse_guard_cfg *c, const char *what, int mounted,
 		    int rc, uint64_t ms, uint64_t silent_ms, int killed)
 {
 	struct gbuf g;
@@ -138,7 +138,7 @@ static void greport(const struct nfuse_guard_cfg *c, const char *what, int mount
 	gb_u(&g, wall_ms());
 	gb_s(&g, ",\"pid\":");
 	gb_u(&g, (uint64_t)g_driver_pid);
-	gb_s(&g, ",\"role\":\"nfuse\",\"seq\":0,\"type\":\"nfuse_guard\",\"what\":\"");
+	gb_s(&g, ",\"role\":\"openmacfuse\",\"seq\":0,\"type\":\"openmacfuse_guard\",\"what\":\"");
 	gb_s(&g, what);
 	gb_s(&g, "\",\"mounted\":");
 	gb_u(&g, (uint64_t)(mounted ? 1 : 0));
@@ -158,7 +158,7 @@ static void greport(const struct nfuse_guard_cfg *c, const char *what, int mount
 }
 
 /* Is our entry (mount point and source both match) still in the mount table? The buffer comes from mmap, not malloc */
-static int g_mounted(const struct nfuse_guard_cfg *c)
+static int g_mounted(const struct openmacfuse_guard_cfg *c)
 {
 	int n, i, found = 0;
 	size_t sz;
@@ -191,7 +191,7 @@ static int g_mounted(const struct nfuse_guard_cfg *c)
  * kill -9 test run: the guard process of the old driver force-unmounted the same-named volume
  * the new driver had just mounted, and the files "disappeared" in the middle of the test's reads.
  */
-static int g_top_is_ours(const struct nfuse_guard_cfg *c)
+static int g_top_is_ours(const struct openmacfuse_guard_cfg *c)
 {
 	/* statfs(mount point) is not an option: with the driver dead, statfs on a hard NFS mount hangs. Use getfsstat(MNT_NOWAIT); in mount-table order the last entry for a path is the topmost */
 	int n, i, top = -1, ours = 1;
@@ -217,7 +217,7 @@ static int g_top_is_ours(const struct nfuse_guard_cfg *c)
 	return ours;
 }
 
-static int g_force_unmount(const struct nfuse_guard_cfg *c)
+static int g_force_unmount(const struct openmacfuse_guard_cfg *c)
 {
 	int i;
 
@@ -236,9 +236,9 @@ static int g_force_unmount(const struct nfuse_guard_cfg *c)
 /* Wait up to ms milliseconds for EOF on the pipe (driver exit): 1 if it came */
 static int g_wait_eof(int rfd, int ms)
 {
-	uint64_t end = nfuse_uptime_ns() + (uint64_t)ms * 1000000ULL;
+	uint64_t end = openmacfuse_uptime_ns() + (uint64_t)ms * 1000000ULL;
 
-	while (nfuse_uptime_ns() < end) {
+	while (openmacfuse_uptime_ns() < end) {
 		struct pollfd p = { .fd = rfd, .events = POLLIN };
 		char b[256];
 		ssize_t n;
@@ -254,9 +254,9 @@ static int g_wait_eof(int rfd, int ms)
 	return 0;
 }
 
-static void guard_main(const struct nfuse_guard_cfg *c, int rfd)
+static void guard_main(const struct openmacfuse_guard_cfg *c, int rfd)
 {
-	uint64_t last = nfuse_uptime_ns(), t0, silent, gapmax = 0;
+	uint64_t last = openmacfuse_uptime_ns(), t0, silent, gapmax = 0;
 	struct gbuf m;
 	int mounted, rc, killed = 0, stalled = 0;
 
@@ -281,7 +281,7 @@ static void guard_main(const struct nfuse_guard_cfg *c, int rfd)
 			ssize_t n = read(rfd, b, sizeof(b));
 
 			if (n > 0) {
-				uint64_t t = nfuse_uptime_ns();
+				uint64_t t = openmacfuse_uptime_ns();
 
 				if (t - last > gapmax)
 					gapmax = t - last;	/* longest heartbeat gap: the basis for choosing the threshold */
@@ -293,13 +293,13 @@ static void guard_main(const struct nfuse_guard_cfg *c, int rfd)
 		}
 		if (getppid() != g_driver_pid)
 			break;			/* reparented: the driver is gone */
-		if (c->stall_ms && nfuse_uptime_ns() - last >= (uint64_t)c->stall_ms * 1000000ULL) {
+		if (c->stall_ms && openmacfuse_uptime_ns() - last >= (uint64_t)c->stall_ms * 1000000ULL) {
 			stalled = 1;
 			break;
 		}
 	}
-	silent = (nfuse_uptime_ns() - last) / 1000000ULL;
-	t0 = nfuse_uptime_ns();
+	silent = (openmacfuse_uptime_ns() - last) / 1000000ULL;
+	t0 = openmacfuse_uptime_ns();
 	mounted = g_mounted(c);
 	if (!stalled) {
 		if (!mounted) {
@@ -318,10 +318,10 @@ static void guard_main(const struct nfuse_guard_cfg *c, int rfd)
 		gb_s(&m, " exited (killed / crashed) with the mount point still mounted -> forced unmount ");
 		gb_s(&m, rc ? "failed" : "succeeded");
 		gb_s(&m, ", took ");
-		gb_secs(&m, (nfuse_uptime_ns() - t0) / 1000000ULL);
+		gb_secs(&m, (openmacfuse_uptime_ns() - t0) / 1000000ULL);
 		gb_s(&m, " s");
 		glog(c, &m);
-		greport(c, "driver_gone", 1, rc, (nfuse_uptime_ns() - t0) / 1000000ULL, silent, 0);
+		greport(c, "driver_gone", 1, rc, (openmacfuse_uptime_ns() - t0) / 1000000ULL, silent, 0);
 		_exit(0);
 	}
 	m.n = 0;
@@ -344,16 +344,16 @@ static void guard_main(const struct nfuse_guard_cfg *c, int rfd)
 	gb_s(&m, !mounted ? " (mount was already gone)" : rc ? " failed" : " succeeded");
 	gb_s(&m, killed ? ", driver SIGKILLed" : ", driver exited by itself");
 	gb_s(&m, ", took ");
-	gb_secs(&m, (nfuse_uptime_ns() - t0) / 1000000ULL);
+	gb_secs(&m, (openmacfuse_uptime_ns() - t0) / 1000000ULL);
 	gb_s(&m, " s");
 	glog(c, &m);
-	greport(c, "driver_stalled", mounted, rc, (nfuse_uptime_ns() - t0) / 1000000ULL, silent, killed);
+	greport(c, "driver_stalled", mounted, rc, (openmacfuse_uptime_ns() - t0) / 1000000ULL, silent, killed);
 	_exit(0);
 }
 
-static struct nfuse_guard_cfg g_cfg;	/* after fork the child reads its own copy */
+static struct openmacfuse_guard_cfg g_cfg;	/* after fork the child reads its own copy */
 
-int nfuse_guard_lock_open(const char *mnt)
+int openmacfuse_guard_lock_open(const char *mnt)
 {
 	char path[80];
 	uint64_t h = 1469598103934665603ULL;
@@ -364,17 +364,17 @@ int nfuse_guard_lock_open(const char *mnt)
 		h ^= *p;
 		h *= 1099511628211ULL;
 	}
-	snprintf(path, sizeof(path), "/tmp/nfuse-mnt-%016llx.lock", (unsigned long long)h);
+	snprintf(path, sizeof(path), "/tmp/openmacfuse-mnt-%016llx.lock", (unsigned long long)h);
 	fd = open(path, O_RDONLY | O_CREAT | O_CLOEXEC, 0644);
 	if (fd < 0)
 		fd = open(path, O_RDONLY | O_CLOEXEC);	/* created by another user: a read-only descriptor can still be locked */
 	return fd;
 }
 
-int nfuse_guard_wait(const char *mnt, int wait_ms)
+int openmacfuse_guard_wait(const char *mnt, int wait_ms)
 {
-	uint64_t t0 = nfuse_uptime_ns();
-	int fd = nfuse_guard_lock_open(mnt), ms;
+	uint64_t t0 = openmacfuse_uptime_ns();
+	int fd = openmacfuse_guard_lock_open(mnt), ms;
 
 	if (fd < 0)
 		return 0;
@@ -382,9 +382,9 @@ int nfuse_guard_wait(const char *mnt, int wait_ms)
 		if (flock(fd, LOCK_EX | LOCK_NB) == 0) {
 			flock(fd, LOCK_UN);
 			close(fd);
-			return (int)((nfuse_uptime_ns() - t0) / 1000000ULL);
+			return (int)((openmacfuse_uptime_ns() - t0) / 1000000ULL);
 		}
-		ms = (int)((nfuse_uptime_ns() - t0) / 1000000ULL);
+		ms = (int)((openmacfuse_uptime_ns() - t0) / 1000000ULL);
 		if (ms >= wait_ms) {
 			close(fd);
 			return -1;
@@ -398,7 +398,7 @@ int nfuse_guard_wait(const char *mnt, int wait_ms)
  * application or script looking for the driver with `pgrep -f` would count it too. The command
  * line shown by ps / pgrep -f is read from the argument area in the process's own memory
  * (KERN_PROCARGS2); rewriting that area in place in the child (not growing it, only using the
- * original size) is enough to tell them apart: it shows as "nfuse-guard <driver pid> <mount point>".
+ * original size) is enough to tell them apart: it shows as "openmacfuse-guard <driver pid> <mount point>".
  * The process name (p_comm, what pgrep without -f compares) cannot be changed and remains the
  * executable name.
  */
@@ -424,7 +424,7 @@ static void guard_retitle(void)
 	gb_u(&g, (uint64_t)g_driver_pid);
 	g.b[g.n] = 0;
 	memcpy(pid, g.b, (size_t)g.n + 1);
-	tok[0] = "nfuse-guard";
+	tok[0] = "openmacfuse-guard";
 	tok[1] = pid;
 	tok[2] = g_cfg.mnt;
 	/*
@@ -461,7 +461,7 @@ static void guard_retitle(void)
 	}
 }
 
-int nfuse_guard_start(const struct nfuse_guard_cfg *cfg, pid_t *gpid)
+int openmacfuse_guard_start(const struct openmacfuse_guard_cfg *cfg, pid_t *gpid)
 {
 	int pfd[2];
 	pid_t pid;

@@ -24,9 +24,9 @@
 
 extern char **environ;
 
-volatile pid_t nfuse_mount_pid;
+volatile pid_t openmacfuse_mount_pid;
 
-int nfuse_run_mount_nfs(const char *spec, const char *opts, const char *mnt,
+int openmacfuse_run_mount_nfs(const char *spec, const char *opts, const char *mnt,
 		       int timeout_s, char *errbuf, size_t errlen)
 {
 	posix_spawn_file_actions_t fa;
@@ -35,7 +35,7 @@ int nfuse_run_mount_nfs(const char *spec, const char *opts, const char *mnt,
 	int pfd[2], st = 0, rc;
 	pid_t pid;
 	size_t got = 0;
-	uint64_t t0 = nfuse_uptime_ns();
+	uint64_t t0 = openmacfuse_uptime_ns();
 
 	if (errlen)
 		errbuf[0] = 0;
@@ -57,7 +57,7 @@ int nfuse_run_mount_nfs(const char *spec, const char *opts, const char *mnt,
 		snprintf(errbuf, errlen, "posix_spawn mount_nfs: %s", strerror(rc));
 		return -1;
 	}
-	nfuse_mount_pid = pid;
+	openmacfuse_mount_pid = pid;
 	/* collect the output while waiting for the process to exit */
 	for (;;) {
 		struct pollfd p = { .fd = pfd[0], .events = POLLIN };
@@ -65,14 +65,14 @@ int nfuse_run_mount_nfs(const char *spec, const char *opts, const char *mnt,
 
 		if (w == pid)
 			break;
-		if (nfuse_uptime_ns() - t0 > (uint64_t)timeout_s * 1000000000ULL) {
+		if (openmacfuse_uptime_ns() - t0 > (uint64_t)timeout_s * 1000000000ULL) {
 			/*
 			 * Timeout: do not kill mount_nfs (the lesson from a kernel panic hit
 			 * during testing: a mount_nfs in the middle of the handshake must not be
 			 * killed and must not be umount -f'ed; let it fail and return on its
-			 * own). nfuse_mount_pid keeps its pid; the caller takes over the
+			 * own). openmacfuse_mount_pid keeps its pid; the caller takes over the
 			 * connection and answers IO so that mount_nfs reports the error itself,
-			 * then uses nfuse_mount_nfs_wait to wait a while and see whether it has
+			 * then uses openmacfuse_mount_nfs_wait to wait a while and see whether it has
 			 * exited.
 			 */
 			close(pfd[0]);
@@ -85,7 +85,7 @@ int nfuse_run_mount_nfs(const char *spec, const char *opts, const char *mnt,
 				got += (size_t)n;
 		}
 	}
-	nfuse_mount_pid = 0;
+	openmacfuse_mount_pid = 0;
 	for (;;) {
 		ssize_t n;
 		if (!errlen || got >= errlen - 1)
@@ -109,9 +109,9 @@ int nfuse_run_mount_nfs(const char *spec, const char *opts, const char *mnt,
 	return -1;
 }
 
-int nfuse_mount_nfs_wait(int ms)
+int openmacfuse_mount_nfs_wait(int ms)
 {
-	pid_t pid = nfuse_mount_pid;
+	pid_t pid = openmacfuse_mount_pid;
 	int st, waited = 0;
 
 	if (pid <= 0)
@@ -120,7 +120,7 @@ int nfuse_mount_nfs_wait(int ms)
 		pid_t w = waitpid(pid, &st, WNOHANG);
 
 		if (w == pid || (w < 0 && errno == ECHILD)) {
-			nfuse_mount_pid = 0;
+			openmacfuse_mount_pid = 0;
 			return 1;
 		}
 		if (waited >= ms)
@@ -130,7 +130,7 @@ int nfuse_mount_nfs_wait(int ms)
 	}
 }
 
-int nfuse_is_nfs_mounted(const char *mnt, const char *from)
+int openmacfuse_is_nfs_mounted(const char *mnt, const char *from)
 {
 	struct statfs *buf;
 	int n, i, found = 0;
@@ -153,12 +153,12 @@ int nfuse_is_nfs_mounted(const char *mnt, const char *from)
 	return found;
 }
 
-int nfuse_unmount(const char *mnt, const char *from,
+int openmacfuse_unmount(const char *mnt, const char *from,
 		 void (*log)(const char *fmt, ...))
 {
 	int i;
 
-	if (!nfuse_is_nfs_mounted(mnt, from))
+	if (!openmacfuse_is_nfs_mounted(mnt, from))
 		return 0;
 	for (i = 0; i < 5; i++) {
 		if (unmount(mnt, 0) == 0)
@@ -169,16 +169,16 @@ int nfuse_unmount(const char *mnt, const char *from,
 	}
 	if (log)
 		log("normal unmount failed (%s), forcing unmount", strerror(errno));
-	return nfuse_unmount_force(mnt, from, log);
+	return openmacfuse_unmount_force(mnt, from, log);
 }
 
-int nfuse_unmount_force(const char *mnt, const char *from,
+int openmacfuse_unmount_force(const char *mnt, const char *from,
 		       void (*log)(const char *fmt, ...))
 {
 	int i;
 
 	for (i = 0; i < 3; i++) {
-		if (!nfuse_is_nfs_mounted(mnt, from))
+		if (!openmacfuse_is_nfs_mounted(mnt, from))
 			return 0;
 		if (unmount(mnt, MNT_FORCE) == 0)
 			return 0;
@@ -186,5 +186,5 @@ int nfuse_unmount_force(const char *mnt, const char *from,
 			log("forced unmount failed (attempt %d): %s", i + 1, strerror(errno));
 		usleep(300 * 1000);
 	}
-	return nfuse_is_nfs_mounted(mnt, from) ? -1 : 0;
+	return openmacfuse_is_nfs_mounted(mnt, from) ? -1 : 0;
 }

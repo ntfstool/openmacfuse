@@ -19,7 +19,7 @@ static int g_fd = -1;
 static char g_tool[64];
 static _Atomic unsigned long long g_seq;
 
-char *nfuse_report_esc(const char *s, char *out, size_t n)
+char *openmacfuse_report_esc(const char *s, char *out, size_t n)
 {
 	size_t o = 0;
 
@@ -46,9 +46,9 @@ char *nfuse_report_esc(const char *s, char *out, size_t n)
 	return out;
 }
 
-int nfuse_report_open(const char *tool)
+int openmacfuse_report_open(const char *tool)
 {
-	const char *p = getenv("NFUSE_REPORT");
+	const char *p = getenv("OPENMACFUSE_REPORT");
 	const char *b = tool ? strrchr(tool, '/') : NULL;
 	char esc[sizeof(g_tool)];
 
@@ -72,24 +72,24 @@ int nfuse_report_open(const char *tool)
 		if (pn && *pn)
 			b = NULL, tool = pn;
 	}
-	nfuse_report_esc(b ? b + 1 : tool ? tool : "?", esc, sizeof(esc));
+	openmacfuse_report_esc(b ? b + 1 : tool ? tool : "?", esc, sizeof(esc));
 	snprintf(g_tool, sizeof(g_tool), "%s", esc);
 	return 0;
 }
 
-int nfuse_report_fd(void)
+int openmacfuse_report_fd(void)
 {
 	return g_fd;
 }
 
-void nfuse_report_close(void)
+void openmacfuse_report_close(void)
 {
 	if (g_fd >= 0)
 		close(g_fd);
 	g_fd = -1;
 }
 
-void nfuse_report(const char *type, const char *fmt, ...)
+void openmacfuse_report(const char *type, const char *fmt, ...)
 {
 	char f[2048], line[2400];
 	struct timeval tv;
@@ -106,7 +106,7 @@ void nfuse_report(const char *type, const char *fmt, ...)
 	}
 	gettimeofday(&tv, NULL);
 	n = snprintf(line, sizeof(line),
-		     "{\"ts\":%llu,\"pid\":%d,\"role\":\"nfuse\",\"seq\":%llu,\"type\":\"%s\",\"tool\":\"%s\"%s%s}\n",
+		     "{\"ts\":%llu,\"pid\":%d,\"role\":\"openmacfuse\",\"seq\":%llu,\"type\":\"%s\",\"tool\":\"%s\"%s%s}\n",
 		     (unsigned long long)tv.tv_sec * 1000 + (unsigned long long)tv.tv_usec / 1000, (int)getpid(),
 		     (unsigned long long)atomic_fetch_add(&g_seq, 1) + 1, type, g_tool, f[0] ? "," : "", f);
 	if (n <= 0)

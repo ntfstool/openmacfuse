@@ -4,7 +4,7 @@
 
 **一个兼容 FUSE 2.x 的 macOS 库，不需要内核扩展，也不需要安装任何东西。**
 
-OpenMacFUSE 在你的文件系统进程内运行一个 NFSv4.0 服务器，并用 macOS 自带的 NFS 客户端挂载它。你的 `fuse_operations` 回调保持不变；只需链接一个静态库 `libnfuse.a`，取代原来的 FUSE 库。
+OpenMacFUSE 在你的文件系统进程内运行一个 NFSv4.0 服务器，并用 macOS 自带的 NFS 客户端挂载它。你的 `fuse_operations` 回调保持不变；只需链接一个静态库 `libopenmacfuse.a`，取代原来的 FUSE 库。
 
 它是 [NTFSTool Pro](https://ntfstool.com) 内置的挂载引擎，承载 NTFS、ext2/3/4、exFAT 和 BitLocker 卷。它是为一款正在发售的产品而写的，下文的测量数据都来自这项工作。
 
@@ -71,17 +71,15 @@ OpenMacFUSE 走的就是这条路，并且把整个服务器放进文件系统�
 ```sh
 git clone https://github.com/ntfstool/openmacfuse
 cd openmacfuse
-make              # build/libnfuse.a (+ build/nfuse-m0, an in-memory test server)
+make              # build/libopenmacfuse.a (+ build/openmacfuse-m0, an in-memory test server)
 make universal    # arm64 + x86_64
 make -C examples/hello
 mkdir -p /tmp/hello && examples/hello/hello /tmp/hello
-cat /tmp/hello/hello.txt      # Hello from nfuse
+cat /tmp/hello/hello.txt      # Hello from openmacfuse
 umount /tmp/hello             # hello exits after the unmount
 ```
 
 第一次挂载时，macOS 可能会为调用方应用弹出“网络卷宗”权限提示。这是正常的：它本来就是一次 NFS 挂载。
-
-库及其标识符都以 `nfuse` 命名（`libnfuse.a`、`nfuse.h`、`NFUSE_*`）。OpenMacFUSE 是项目的名字。
 
 ## 在你的文件系统中使用
 
@@ -92,7 +90,7 @@ umount /tmp/hello             # hello exits after the unmount
 
 ```sh
 cc -I/path/to/openmacfuse/include -c myfs.c
-cc -o myfs myfs.o /path/to/openmacfuse/build/libnfuse.a \
+cc -o myfs myfs.o /path/to/openmacfuse/build/libopenmacfuse.a \
    -lpthread -framework CoreFoundation -framework IOKit
 ```
 
@@ -124,25 +122,25 @@ fuse_mount → fuse_new → fuse_set_signal_handlers → [daemon()] → fuse_loo
 | `rwsize=N` | NFS 读写块大小（默认 262144） |
 | `nobrowse` | 不在 Finder 中显示该卷 |
 | `nosuid`, `nodev`, `noexec` | 原样传给挂载 |
-| `nfuse_case=insensitive\|sensitive` | 查找不区分大小写（默认）。卷上已经存在仅大小写不同的名字时，自动回退到 `sensitive` |
-| `nfuse_xattr=adfile\|appledouble\|streams` | 扩展属性存放在哪里。`adfile`（默认）：库把客户端的 `._` 文件转成对你的 `setxattr`/`getxattr` 的调用，卷上不会多存任何东西。`appledouble`：普通的 `._` 文件。`streams`：NFSv4 命名属性，实验性，见“已知限制” |
-| `nfuse_nfc=1\|0` | 新名字以 Unicode NFC 形式存储（默认 1）。无论取哪个值，查找都同时接受 NFC 和 NFD |
+| `openmacfuse_case=insensitive\|sensitive` | 查找不区分大小写（默认）。卷上已经存在仅大小写不同的名字时，自动回退到 `sensitive` |
+| `openmacfuse_xattr=adfile\|appledouble\|streams` | 扩展属性存放在哪里。`adfile`（默认）：库把客户端的 `._` 文件转成对你的 `setxattr`/`getxattr` 的调用，卷上不会多存任何东西。`appledouble`：普通的 `._` 文件。`streams`：NFSv4 命名属性，实验性，见“已知限制” |
+| `openmacfuse_nfc=1\|0` | 新名字以 Unicode NFC 形式存储（默认 1）。无论取哪个值，查找都同时接受 NFC 和 NFD |
 
-常见的 FUSE 选项（`local`、`allow_other`、`fsname`、…）会被接受并忽略。通过 `fuse_main` 进入的程序，除非自己传入这些选项，否则使用保守的默认值（`nfuse_xattr=appledouble`、`nfuse_case=sensitive`）。
+常见的 FUSE 选项（`local`、`allow_other`、`fsname`、…）会被接受并忽略。通过 `fuse_main` 进入的程序，除非自己传入这些选项，否则使用保守的默认值（`openmacfuse_xattr=appledouble`、`openmacfuse_case=sensitive`）。
 
 ### 环境变量
 
 | 变量 | 默认值 | 作用 |
 |---|---|---|
-| `NFUSE_TRANSPORT` | `auto` | `unix`、`tcp` 或 `auto`（macOS 26+ 用 unix 套接字，更早的版本用 127.0.0.1 TCP） |
-| `NFUSE_LOG` | — | 把日志追加写入这个文件 |
-| `NFUSE_WATCHDOG_S` | 30 | 请求多少秒没有进展就算卡死；0 表示禁用 |
-| `NFUSE_WATCHDOG_MAX_S` | 600 | 单个请求的硬性时限；0 表示禁用 |
-| `NFUSE_GUARD` | 1 | 0 = 不启动看护进程 |
-| `NFUSE_GUARD_S` | 20 | 多少秒没有心跳，看护进程就认为进程已冻结 |
-| `NFUSE_MOUNT_TIMEOUT_S` | 30 | `mount_nfs` 的超时时间 |
+| `OPENMACFUSE_TRANSPORT` | `auto` | `unix`、`tcp` 或 `auto`（macOS 26+ 用 unix 套接字，更早的版本用 127.0.0.1 TCP） |
+| `OPENMACFUSE_LOG` | — | 把日志追加写入这个文件 |
+| `OPENMACFUSE_WATCHDOG_S` | 30 | 请求多少秒没有进展就算卡死；0 表示禁用 |
+| `OPENMACFUSE_WATCHDOG_MAX_S` | 600 | 单个请求的硬性时限；0 表示禁用 |
+| `OPENMACFUSE_GUARD` | 1 | 0 = 不启动看护进程 |
+| `OPENMACFUSE_GUARD_S` | 20 | 多少秒没有心跳，看护进程就认为进程已冻结 |
+| `OPENMACFUSE_MOUNT_TIMEOUT_S` | 30 | `mount_nfs` 的超时时间 |
 
-可选的扩展回调（大小写折叠、按范围读写 xattr、供看门狗使用的进度计数器、挂载信息）声明在 [`include/nfuse.h`](include/nfuse.h) 中。
+可选的扩展回调（大小写折叠、按范围读写 xattr、供看门狗使用的进度计数器、挂载信息）声明在 [`include/openmacfuse.h`](include/openmacfuse.h) 中。
 
 ## 工作原理
 

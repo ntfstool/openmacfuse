@@ -4,7 +4,7 @@
 
 **A FUSE 2.x compatible library for macOS that needs no kernel extension and nothing to install.**
 
-OpenMacFUSE runs an NFSv4.0 server inside your file system process and mounts it with the NFS client that ships with macOS. Your `fuse_operations` callbacks stay the same; you link one static library, `libnfuse.a`, instead of a FUSE library.
+OpenMacFUSE runs an NFSv4.0 server inside your file system process and mounts it with the NFS client that ships with macOS. Your `fuse_operations` callbacks stay the same; you link one static library, `libopenmacfuse.a`, instead of a FUSE library.
 
 It is the mount engine built into [NTFSTool Pro](https://ntfstool.com), where it carries NTFS, ext2/3/4, exFAT and BitLocker volumes. It was written for a shipping product, and the measurements below come from that work.
 
@@ -71,17 +71,15 @@ Requirements: macOS with the Xcode Command Line Tools. Nothing else.
 ```sh
 git clone https://github.com/ntfstool/openmacfuse
 cd openmacfuse
-make              # build/libnfuse.a (+ build/nfuse-m0, an in-memory test server)
+make              # build/libopenmacfuse.a (+ build/openmacfuse-m0, an in-memory test server)
 make universal    # arm64 + x86_64
 make -C examples/hello
 mkdir -p /tmp/hello && examples/hello/hello /tmp/hello
-cat /tmp/hello/hello.txt      # Hello from nfuse
+cat /tmp/hello/hello.txt      # Hello from openmacfuse
 umount /tmp/hello             # hello exits after the unmount
 ```
 
 The first mount may trigger the macOS "network volumes" permission prompt for the calling app. That is expected: it is an NFS mount.
-
-The library and its identifiers are named `nfuse` (`libnfuse.a`, `nfuse.h`, `NFUSE_*`). OpenMacFUSE is the name of the project.
 
 ## Using it in your file system
 
@@ -92,7 +90,7 @@ The library and its identifiers are named `nfuse` (`libnfuse.a`, `nfuse.h`, `NFU
 
 ```sh
 cc -I/path/to/openmacfuse/include -c myfs.c
-cc -o myfs myfs.o /path/to/openmacfuse/build/libnfuse.a \
+cc -o myfs myfs.o /path/to/openmacfuse/build/libopenmacfuse.a \
    -lpthread -framework CoreFoundation -framework IOKit
 ```
 
@@ -124,25 +122,25 @@ The mount is complete when `fuse_new` returns. `fuse_loop` returns after the vol
 | `rwsize=N` | NFS read/write size (default 262144) |
 | `nobrowse` | do not show the volume in Finder |
 | `nosuid`, `nodev`, `noexec` | passed to the mount |
-| `nfuse_case=insensitive\|sensitive` | case-insensitive lookup (default). Falls back to `sensitive` automatically when the volume already holds names that differ only by case |
-| `nfuse_xattr=adfile\|appledouble\|streams` | where extended attributes go. `adfile` (default): the library turns the client's `._` files into calls to your `setxattr`/`getxattr`, so nothing extra is stored on the volume. `appledouble`: plain `._` files. `streams`: NFSv4 named attributes, experimental, see Known limitations |
-| `nfuse_nfc=1\|0` | store new names in Unicode NFC (default 1). Lookup accepts NFC and NFD either way |
+| `openmacfuse_case=insensitive\|sensitive` | case-insensitive lookup (default). Falls back to `sensitive` automatically when the volume already holds names that differ only by case |
+| `openmacfuse_xattr=adfile\|appledouble\|streams` | where extended attributes go. `adfile` (default): the library turns the client's `._` files into calls to your `setxattr`/`getxattr`, so nothing extra is stored on the volume. `appledouble`: plain `._` files. `streams`: NFSv4 named attributes, experimental, see Known limitations |
+| `openmacfuse_nfc=1\|0` | store new names in Unicode NFC (default 1). Lookup accepts NFC and NFD either way |
 
-Common FUSE options (`local`, `allow_other`, `fsname`, …) are accepted and ignored. Programs that enter through `fuse_main` get conservative defaults (`nfuse_xattr=appledouble`, `nfuse_case=sensitive`) unless they pass these options.
+Common FUSE options (`local`, `allow_other`, `fsname`, …) are accepted and ignored. Programs that enter through `fuse_main` get conservative defaults (`openmacfuse_xattr=appledouble`, `openmacfuse_case=sensitive`) unless they pass these options.
 
 ### Environment variables
 
 | Variable | Default | Effect |
 |---|---|---|
-| `NFUSE_TRANSPORT` | `auto` | `unix`, `tcp`, or `auto` (unix socket on macOS 26+, 127.0.0.1 TCP before) |
-| `NFUSE_LOG` | — | append the log to this file |
-| `NFUSE_WATCHDOG_S` | 30 | seconds without progress before a request counts as hung; 0 disables |
-| `NFUSE_WATCHDOG_MAX_S` | 600 | hard limit for one request; 0 disables |
-| `NFUSE_GUARD` | 1 | 0 = do not start the guard process |
-| `NFUSE_GUARD_S` | 20 | seconds without a heartbeat before the guard treats the process as frozen |
-| `NFUSE_MOUNT_TIMEOUT_S` | 30 | `mount_nfs` timeout |
+| `OPENMACFUSE_TRANSPORT` | `auto` | `unix`, `tcp`, or `auto` (unix socket on macOS 26+, 127.0.0.1 TCP before) |
+| `OPENMACFUSE_LOG` | — | append the log to this file |
+| `OPENMACFUSE_WATCHDOG_S` | 30 | seconds without progress before a request counts as hung; 0 disables |
+| `OPENMACFUSE_WATCHDOG_MAX_S` | 600 | hard limit for one request; 0 disables |
+| `OPENMACFUSE_GUARD` | 1 | 0 = do not start the guard process |
+| `OPENMACFUSE_GUARD_S` | 20 | seconds without a heartbeat before the guard treats the process as frozen |
+| `OPENMACFUSE_MOUNT_TIMEOUT_S` | 30 | `mount_nfs` timeout |
 
-Optional extension callbacks (case folding, ranged xattr I/O, progress counter for the watchdog, mount information) are declared in [`include/nfuse.h`](include/nfuse.h).
+Optional extension callbacks (case folding, ranged xattr I/O, progress counter for the watchdog, mount information) are declared in [`include/openmacfuse.h`](include/openmacfuse.h).
 
 ## How it works
 

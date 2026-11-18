@@ -1,17 +1,17 @@
 /*
- * fuse_common.h -- FUSE 2.x compatibility header of nfuse: common types
+ * fuse_common.h -- FUSE 2.x compatibility header of openmacfuse: common types
  *
  * Written independently from the public FUSE 2.x high-level interface (the fuse_operations /
  * fuse_file_info / fuse_conn_info family) so that existing FUSE 2.x file systems can link
- * against libnfuse.a without changing their callback code. The struct layouts only have to be
+ * against libopenmacfuse.a without changing their callback code. The struct layouts only have to be
  * consistent within this library (the file system and the library are both compiled against
  * these headers); binary compatibility with other FUSE implementations is not a goal.
  *
  * Copyright 2026 The OpenMacFUSE Authors
  * SPDX-License-Identifier: MIT
  */
-#ifndef NFUSE_FUSE_COMMON_H
-#define NFUSE_FUSE_COMMON_H
+#ifndef OPENMACFUSE_FUSE_COMMON_H
+#define OPENMACFUSE_FUSE_COMMON_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -26,7 +26,7 @@
 #define FUSE_VERSION	FUSE_MAKE_VERSION(FUSE_MAJOR_VERSION, FUSE_MINOR_VERSION)
 
 /* Identifies this library as the in-process NFS backend (file systems and tests can test for it) */
-#define NFUSE_FUSE	1
+#define OPENMACFUSE_FUSE	1
 
 #ifdef __cplusplus
 extern "C" {
@@ -100,7 +100,7 @@ int fuse_version(void);
 
 /* ---------- For FUSE 2.x file systems that use fuse_main ---------- */
 
-/* Only here so that sources using these callbacks / capability bits compile: nfuse never calls poll / read_buf / write_buf, the capability bits are merely recorded */
+/* Only here so that sources using these callbacks / capability bits compile: OpenMacFUSE never calls poll / read_buf / write_buf, the capability bits are merely recorded */
 #define FUSE_CAP_SPLICE_WRITE	(1 << 7)
 #define FUSE_CAP_SPLICE_MOVE	(1 << 8)
 #define FUSE_CAP_SPLICE_READ	(1 << 9)
@@ -148,4 +148,4 @@ void fuse_remove_signal_handlers(struct fuse_session *se);
 }
 #endif
 
-#endif /* NFUSE_FUSE_COMMON_H */
+#endif /* OPENMACFUSE_FUSE_COMMON_H */

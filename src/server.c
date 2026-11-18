@@ -38,7 +38,7 @@
 
 #define REC_HEADROOM	(64 * 1024)
 
-int nfuse_listen_tcp(const char *addr, uint16_t port, uint16_t *bound)
+int openmacfuse_listen_tcp(const char *addr, uint16_t port, uint16_t *bound)
 {
 	struct sockaddr_in sin;
 	socklen_t sl = sizeof(sin);
@@ -69,7 +69,7 @@ int nfuse_listen_tcp(const char *addr, uint16_t port, uint16_t *bound)
 	return fd;
 }
 
-int nfuse_listen_unix(const char *path)
+int openmacfuse_listen_unix(const char *path)
 {
 	struct sockaddr_un sun;
 	int fd;
@@ -95,9 +95,9 @@ int nfuse_listen_unix(const char *path)
 	return fd;
 }
 
-struct nfuse_conn {
-	struct nfuse_conn	*next;
-	struct nfuse_tp		*tp;
+struct openmacfuse_conn {
+	struct openmacfuse_conn	*next;
+	struct openmacfuse_tp		*tp;
 	int			fd;
 	int			dead;		/* peer disconnected / error, fd already closed */
 	int			has_thread;
@@ -126,13 +126,13 @@ struct nfuse_conn {
 	int			denied;
 };
 
-#define NFUSE_GATE_MAX_DENIED	8	/* an untrusted connection is dropped after this many rejections */
+#define OPENMACFUSE_GATE_MAX_DENIED	8	/* an untrusted connection is dropped after this many rejections */
 
 /*
  * Handle one RPC call and write the reply into out; returns 0 to send the reply, 1 to drop it
  * without replying, 2 to drop it and close the connection (test hook), 3 to close after replying
  */
-static int handle_call(struct nfuse_server *s, struct nfuse_conn *cn,
+static int handle_call(struct openmacfuse_server *s, struct openmacfuse_conn *cn,
 		       const uint8_t *msg, size_t len, xdr_enc_t *out)
 {
 	xdr_dec_t d;
@@ -172,7 +172,7 @@ static int handle_call(struct nfuse_server *s, struct nfuse_conn *cn,
 			if (s->log)
 				s->log("xid=%08x NULL (connection fd=%d)", call.xid, cn ? cn->fd : -1);
 			else
-				fprintf(stderr, "[nfuse] xid=%08x NULL\n", call.xid);
+				fprintf(stderr, "[openmacfuse] xid=%08x NULL\n", call.xid);
 		}
 		return 0;
 	case NFSPROC4_COMPOUND: {
@@ -219,26 +219,26 @@ static int handle_call(struct nfuse_server *s, struct nfuse_conn *cn,
 			} else if (st != NFS4_OK) {
 				cn->denied++;
 				s->gate_denied++;
-				if (s->log && (cn->denied <= 3 || cn->denied == NFUSE_GATE_MAX_DENIED))
+				if (s->log && (cn->denied <= 3 || cn->denied == OPENMACFUSE_GATE_MAX_DENIED))
 					s->log("local security: rejected a request on untrusted connection fd=%d (xid=%08x, first op %s, status %u, rejection %d%s)",
 					       cn->fd, call.xid, fop ? nfs4_op_name(fop) : "-", st, cn->denied,
-					       cn->denied >= NFUSE_GATE_MAX_DENIED ? ", disconnecting" : "");
+					       cn->denied >= OPENMACFUSE_GATE_MAX_DENIED ? ", disconnecting" : "");
 				rpc_reply_accepted(out, call.xid, RPC_SUCCESS);
 				if (nfs4_compound_fail(&d, out, st) < 0) {
 					xdr_truncate(out, out->len - 4);
 					out->err = 0;
 					xdr_put_u32(out, RPC_GARBAGE_ARGS);
 				}
-				return cn->denied >= NFUSE_GATE_MAX_DENIED ? 3 : 0;
+				return cn->denied >= OPENMACFUSE_GATE_MAX_DENIED ? 3 : 0;
 			}
 		}
-		sum = nfuse_drc_sum(msg, len);
+		sum = openmacfuse_drc_sum(msg, len);
 		pthread_mutex_lock(&s->lock);
 		/*
 		 * Duplicate request cache: a non-idempotent request with the same xid and the
 		 * same contents has already been executed, so return the previous reply verbatim
 		 */
-		cached = s->no_drc ? NULL : nfuse_drc_lookup(&s->drc, call.xid, sum, &clen);
+		cached = s->no_drc ? NULL : openmacfuse_drc_lookup(&s->drc, call.xid, sum, &clen);
 		if (cached) {
 			xdr_put_fixed(out, cached, clen);
 			pthread_mutex_unlock(&s->lock);
@@ -250,10 +250,10 @@ static int handle_call(struct nfuse_server *s, struct nfuse_conn *cn,
 		rpc_reply_accepted(out, call.xid, RPC_SUCCESS);
 		hdr = out->len;
 		{
-			uint64_t t0 = nfuse_uptime_ns(), dt;
+			uint64_t t0 = openmacfuse_uptime_ns(), dt;
 
 			rc = nfs4_compound(s, &call, &d, out, &flags);
-			dt = nfuse_uptime_ns() - t0;
+			dt = openmacfuse_uptime_ns() - t0;
 			/*
 			 * total time the server spends processing COMPOUNDs (lock held), to see
 			 * the server's share with large directories / concurrency
@@ -273,11 +273,11 @@ static int handle_call(struct nfuse_server *s, struct nfuse_conn *cn,
 			xdr_put_u32(out, RPC_GARBAGE_ARGS);
 			flags = 0;
 		}
-		if ((flags & NFUSE_CF_CACHE) && !s->no_drc && !out->err && out->len > 4)
-			nfuse_drc_insert(&s->drc, call.xid, sum, out->buf + 4,
+		if ((flags & OPENMACFUSE_CF_CACHE) && !s->no_drc && !out->err && out->len > 4)
+			openmacfuse_drc_insert(&s->drc, call.xid, sum, out->buf + 4,
 					 (uint32_t)(out->len - 4));
 		pthread_mutex_unlock(&s->lock);
-		if (flags & NFUSE_CF_DROP)
+		if (flags & OPENMACFUSE_CF_DROP)
 			return s->test_drop_close ? 2 : 1;
 		return 0;
 	}
@@ -289,13 +289,13 @@ static int handle_call(struct nfuse_server *s, struct nfuse_conn *cn,
 
 /* ---------- Buffer pool (the caller holds tp->mu) ---------- */
 
-static void *pool_get(struct nfuse_tp *tp)
+static void *pool_get(struct openmacfuse_tp *tp)
 {
 	void *b;
 
 	if (tp->nfree > 0)
 		return tp->freebufs[--tp->nfree];
-	if (tp->nalloc >= 2 * NFUSE_TP_MAX_CONNS)
+	if (tp->nalloc >= 2 * OPENMACFUSE_TP_MAX_CONNS)
 		return NULL;
 	b = malloc(tp->bufsize);
 	if (b)
@@ -303,7 +303,7 @@ static void *pool_get(struct nfuse_tp *tp)
 	return b;
 }
 
-static void pool_put(struct nfuse_tp *tp, void *b)
+static void pool_put(struct openmacfuse_tp *tp, void *b)
 {
 	if (b)
 		tp->freebufs[tp->nfree++] = b;
@@ -320,9 +320,9 @@ static int wait_readable(int fd, int ms)
 	return r > 0 ? 1 : 0;
 }
 
-static void conn_mark_dead(struct nfuse_conn *cn)
+static void conn_mark_dead(struct openmacfuse_conn *cn)
 {
-	struct nfuse_tp *tp = cn->tp;
+	struct openmacfuse_tp *tp = cn->tp;
 
 	pthread_mutex_lock(&tp->mu);
 	if (!cn->dead) {
@@ -343,9 +343,9 @@ static void conn_mark_dead(struct nfuse_conn *cn)
 
 static void *conn_thread(void *arg)
 {
-	struct nfuse_conn *cn = arg;
-	struct nfuse_tp *tp = cn->tp;
-	struct nfuse_server *s = tp->s;
+	struct openmacfuse_conn *cn = arg;
+	struct openmacfuse_tp *tp = cn->tp;
+	struct openmacfuse_server *s = tp->s;
 	size_t rcap = tp->bufsize, rlen = 0;
 	xdr_enc_t out;
 
@@ -362,7 +362,7 @@ static void *conn_thread(void *arg)
 		int rc;
 		size_t n;
 
-		cn->beat = nfuse_uptime_ns();
+		cn->beat = openmacfuse_uptime_ns();
 		if (s->test_stall_path && access(s->test_stall_path, F_OK) == 0) {
 			/*
 			 * Test hook: simulate stalled service threads -- no requests are read and
@@ -385,7 +385,7 @@ static void *conn_thread(void *arg)
 		if (rc <= 0)
 			goto dead;
 		cn->rlen = rlen;
-		cn->req_t0 = nfuse_uptime_ns();
+		cn->req_t0 = openmacfuse_uptime_ns();
 		rc = handle_call(s, cn, cn->rbuf, rlen, &out);
 		if (cn->taken) {
 			/*
@@ -435,9 +435,9 @@ dead:
  * Reap the records of closed connections (join the thread, unlink from the list); the caller does
  * not hold tp->mu
  */
-static void reap_dead(struct nfuse_tp *tp, int join_live)
+static void reap_dead(struct openmacfuse_tp *tp, int join_live)
 {
-	struct nfuse_conn **pp, *cn;
+	struct openmacfuse_conn **pp, *cn;
 
 	pthread_mutex_lock(&tp->mu);
 	pp = &tp->conns;
@@ -471,14 +471,14 @@ static void reap_dead(struct nfuse_tp *tp, int join_live)
 
 static void *accept_thread(void *arg)
 {
-	struct nfuse_tp *tp = arg;
-	struct nfuse_server *s = tp->s;
+	struct openmacfuse_tp *tp = arg;
+	struct openmacfuse_server *s = tp->s;
 
 	while (!tp->pausing) {
-		struct nfuse_conn *cn;
+		struct openmacfuse_conn *cn;
 		int one = 1, fd, rc;
 
-		tp->acc_beat = nfuse_uptime_ns();
+		tp->acc_beat = openmacfuse_uptime_ns();
 		rc = wait_readable(tp->lfd, 100);
 
 		if (rc <= 0) {
@@ -516,7 +516,7 @@ static void *accept_thread(void *arg)
 				cn->trusted = trusted;
 		}
 		pthread_mutex_lock(&tp->mu);
-		if (cn && tp->nconns < NFUSE_TP_MAX_CONNS) {
+		if (cn && tp->nconns < OPENMACFUSE_TP_MAX_CONNS) {
 			cn->rbuf = pool_get(tp);
 			cn->tbuf = pool_get(tp);
 		}
@@ -551,7 +551,7 @@ static void *accept_thread(void *arg)
 	return NULL;
 }
 
-int nfuse_tp_init(struct nfuse_tp *tp, struct nfuse_server *s, int lfd, int wake_w)
+int openmacfuse_tp_init(struct openmacfuse_tp *tp, struct openmacfuse_server *s, int lfd, int wake_w)
 {
 	memset(tp, 0, sizeof(*tp));
 	tp->s = s;
@@ -563,9 +563,9 @@ int nfuse_tp_init(struct nfuse_tp *tp, struct nfuse_server *s, int lfd, int wake
 	return 0;
 }
 
-int nfuse_tp_resume(struct nfuse_tp *tp)
+int openmacfuse_tp_resume(struct openmacfuse_tp *tp)
 {
-	struct nfuse_conn *cn;
+	struct openmacfuse_conn *cn;
 
 	if (tp->running)
 		return 0;
@@ -584,7 +584,7 @@ int nfuse_tp_resume(struct nfuse_tp *tp)
 	return 0;
 }
 
-void nfuse_tp_pause(struct nfuse_tp *tp)
+void openmacfuse_tp_pause(struct openmacfuse_tp *tp)
 {
 	if (!tp->running)
 		return;
@@ -595,12 +595,12 @@ void nfuse_tp_pause(struct nfuse_tp *tp)
 	tp->pausing = 0;
 }
 
-void nfuse_tp_shutdown(struct nfuse_tp *tp)
+void openmacfuse_tp_shutdown(struct openmacfuse_tp *tp)
 {
-	struct nfuse_conn *cn;
+	struct openmacfuse_conn *cn;
 	int i;
 
-	nfuse_tp_pause(tp);
+	openmacfuse_tp_pause(tp);
 	pthread_mutex_lock(&tp->mu);
 	while ((cn = tp->conns)) {
 		tp->conns = cn->next;
@@ -622,10 +622,10 @@ void nfuse_tp_shutdown(struct nfuse_tp *tp)
 	tp->lfd = -1;
 }
 
-void nfuse_tp_health(struct nfuse_tp *tp, uint64_t *oldest_req, uint64_t *oldest_idle_beat,
+void openmacfuse_tp_health(struct openmacfuse_tp *tp, uint64_t *oldest_req, uint64_t *oldest_idle_beat,
 		     uint64_t *acc_beat)
 {
-	struct nfuse_conn *cn;
+	struct openmacfuse_conn *cn;
 
 	*oldest_req = *oldest_idle_beat = 0;
 	*acc_beat = tp->running && !tp->pausing ? tp->acc_beat : 0;
@@ -665,8 +665,8 @@ void nfuse_tp_health(struct nfuse_tp *tp, uint64_t *oldest_req, uint64_t *oldest
  * the client has in flight now has a reply, so the forced unmount does not have to wait (without
  * this, unmount(MNT_FORCE) was measured to wait about 2 seconds).
  */
-struct nfuse_takeover {
-	struct nfuse_tp	*tp;
+struct openmacfuse_takeover {
+	struct openmacfuse_tp	*tp;
 	int		fd;
 	uint8_t		*req;
 	size_t		reqlen;
@@ -674,8 +674,8 @@ struct nfuse_takeover {
 
 static void *takeover_thread(void *arg)
 {
-	struct nfuse_takeover *t = arg;
-	struct nfuse_server *s = t->tp->s;
+	struct openmacfuse_takeover *t = arg;
+	struct openmacfuse_server *s = t->tp->s;
 	size_t cap = t->tp->bufsize, rcap = 0, rlen = 0, n;
 	uint8_t *rb = NULL;
 	xdr_enc_t out;
@@ -703,14 +703,14 @@ static void *takeover_thread(void *arg)
 	return NULL;
 }
 
-int nfuse_tp_takeover(struct nfuse_tp *tp)
+int openmacfuse_tp_takeover(struct openmacfuse_tp *tp)
 {
-	struct nfuse_conn *cn;
+	struct openmacfuse_conn *cn;
 	int k = 0;
 
 	pthread_mutex_lock(&tp->mu);
 	for (cn = tp->conns; cn; cn = cn->next) {
-		struct nfuse_takeover *t;
+		struct openmacfuse_takeover *t;
 		pthread_t th;
 
 		if (cn->dead || cn->fd < 0 || !cn->req_t0 || cn->taken)
@@ -735,7 +735,7 @@ int nfuse_tp_takeover(struct nfuse_tp *tp)
 	return k;
 }
 
-int nfuse_tp_nconns(struct nfuse_tp *tp)
+int openmacfuse_tp_nconns(struct openmacfuse_tp *tp)
 {
 	int n;
 
@@ -745,20 +745,20 @@ int nfuse_tp_nconns(struct nfuse_tp *tp)
 	return n;
 }
 
-size_t nfuse_tp_pool_bytes(struct nfuse_tp *tp)
+size_t openmacfuse_tp_pool_bytes(struct openmacfuse_tp *tp)
 {
 	return (size_t)tp->nalloc * tp->bufsize;
 }
 
-int nfuse_serve(struct nfuse_server *s, int lfd, volatile int *stop_flag)
+int openmacfuse_serve(struct openmacfuse_server *s, int lfd, volatile int *stop_flag)
 {
-	struct nfuse_tp tp;
+	struct openmacfuse_tp tp;
 
-	nfuse_tp_init(&tp, s, lfd, -1);
-	if (nfuse_tp_resume(&tp))
+	openmacfuse_tp_init(&tp, s, lfd, -1);
+	if (openmacfuse_tp_resume(&tp))
 		return -1;
 	while (!*stop_flag)
 		usleep(100 * 1000);
-	nfuse_tp_shutdown(&tp);
+	openmacfuse_tp_shutdown(&tp);
 	return 0;
 }

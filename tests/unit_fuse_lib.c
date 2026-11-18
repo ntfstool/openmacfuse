@@ -1,7 +1,7 @@
 /*
  * unit_fuse_lib.c -- unit tests for a few library behaviours on the fuse_main path (run on the development machine, nothing is mounted)
  *
- *   make -C nfuse test
+ *   make test
  *
  * Uses the real fuse_mount / fuse_new but makes the file system's getattr("/") fail: fuse_new
  * returns NULL before it gets to mount_nfs, so only the local listening socket (a 0700
@@ -9,8 +9,8 @@
  *   - fuse_new fails (init was called) -> the library calls destroy once; its argument and fuse_get_context are both the return value of init
  *   - no init -> destroy is not called
  *   - nosuid / nodev / noexec / suid are parsed by the library (mount flags in the fuse_mount log line)
- *   - nfuse_mount_nfs_wait returns 1 at once when there is no mount_nfs
- *   - nfuse_end_reason is NULL-safe
+ *   - openmacfuse_mount_nfs_wait returns 1 at once when there is no mount_nfs
+ *   - openmacfuse_end_reason is NULL-safe
  *
  * Copyright 2026 The OpenMacFUSE Authors
  * SPDX-License-Identifier: MIT
@@ -24,7 +24,7 @@
 #include <unistd.h>
 
 #include "fuse.h"
-#include "nfuse.h"
+#include "openmacfuse.h"
 #include "../src/mounter.h"
 #include "../src/synth_ino.h"
 
@@ -119,63 +119,63 @@ static void test_mount_flags(const char *mnt, const char *log)
 
 static void test_synth(void)
 {
-	struct nfuse_synth *s = nfuse_synth_new();
+	struct openmacfuse_synth *s = openmacfuse_synth_new();
 	uint64_t a, b, c, d, root;
 	char p[64];
 	int i, ok = 1;
 
-	root = nfuse_synth_get(s, "/");
-	a = nfuse_synth_get(s, "/dir");
-	b = nfuse_synth_get(s, "/dir/f");
-	c = nfuse_synth_get(s, "/dir/sub/g");
+	root = openmacfuse_synth_get(s, "/");
+	a = openmacfuse_synth_get(s, "/dir");
+	b = openmacfuse_synth_get(s, "/dir/f");
+	c = openmacfuse_synth_get(s, "/dir/sub/g");
 	CHECK(root == 1 && a > 1 && b > 1 && c > 1 && a != b && b != c, "allocated by path: root is 1, all others differ");
-	CHECK(nfuse_synth_get(s, "/dir/f") == b, "the number of a path does not change");
-	nfuse_synth_rename(s, "/dir", "/moved");
-	CHECK(nfuse_synth_get(s, "/moved") == a && nfuse_synth_get(s, "/moved/f") == b &&
-	      nfuse_synth_get(s, "/moved/sub/g") == c, "directory rename: its own number and those below it move along");
-	d = nfuse_synth_get(s, "/dir");
+	CHECK(openmacfuse_synth_get(s, "/dir/f") == b, "the number of a path does not change");
+	openmacfuse_synth_rename(s, "/dir", "/moved");
+	CHECK(openmacfuse_synth_get(s, "/moved") == a && openmacfuse_synth_get(s, "/moved/f") == b &&
+	      openmacfuse_synth_get(s, "/moved/sub/g") == c, "directory rename: its own number and those below it move along");
+	d = openmacfuse_synth_get(s, "/dir");
 	CHECK(d != a, "the old path showing up again gets a new number");
-	nfuse_synth_rename(s, "/moved/f", "/dirx");
-	CHECK(nfuse_synth_get(s, "/dirx") == b, "rename over an existing entry: the number follows the source");
-	nfuse_synth_drop(s, "/moved", 1);
-	CHECK(nfuse_synth_get(s, "/moved/sub/g") != c, "removing a directory removes the paths below it");
-	nfuse_synth_drop(s, "/", 1);
-	CHECK(nfuse_synth_get(s, "/") == 1, "the root is always kept");
+	openmacfuse_synth_rename(s, "/moved/f", "/dirx");
+	CHECK(openmacfuse_synth_get(s, "/dirx") == b, "rename over an existing entry: the number follows the source");
+	openmacfuse_synth_drop(s, "/moved", 1);
+	CHECK(openmacfuse_synth_get(s, "/moved/sub/g") != c, "removing a directory removes the paths below it");
+	openmacfuse_synth_drop(s, "/", 1);
+	CHECK(openmacfuse_synth_get(s, "/") == 1, "the root is always kept");
 	for (i = 0; i < 5000; i++) {
 		snprintf(p, sizeof(p), "/many/%d", i);
-		if (nfuse_synth_get(s, p) == 0)
+		if (openmacfuse_synth_get(s, p) == 0)
 			ok = 0;
 	}
 	for (i = 0; i < 5000 && ok; i++) {
 		snprintf(p, sizeof(p), "/many/%d", i);
-		if (nfuse_synth_get(s, p) != nfuse_synth_get(s, p))
+		if (openmacfuse_synth_get(s, p) != openmacfuse_synth_get(s, p))
 			ok = 0;
 	}
-	CHECK(ok && nfuse_synth_count(s) >= 5000, "all 5000 entries present after growing (%zu)", nfuse_synth_count(s));
-	nfuse_synth_free(s);
+	CHECK(ok && openmacfuse_synth_count(s) >= 5000, "all 5000 entries present after growing (%zu)", openmacfuse_synth_count(s));
+	openmacfuse_synth_free(s);
 }
 
 int main(void)
 {
-	char tmp[] = "/tmp/nfuse-unit-lib.XXXXXX", mnt[600], log[600], cmd[700];
+	char tmp[] = "/tmp/openmacfuse-unit-lib.XXXXXX", mnt[600], log[600], cmd[700];
 
 	if (!mkdtemp(tmp)) {
 		perror("mkdtemp");
 		return 1;
 	}
 	snprintf(mnt, sizeof(mnt), "%s/mnt", tmp);
-	snprintf(log, sizeof(log), "%s/nfuse.log", tmp);
+	snprintf(log, sizeof(log), "%s/openmacfuse.log", tmp);
 	mkdir(mnt, 0755);
-	setenv("NFUSE_LOG", log, 1);
-	setenv("NFUSE_GUARD_WAIT_MS", "0", 1);
-	setenv("NFUSE_TRANSPORT", "tcp", 1);	/* only listens on a random 127.0.0.1 port, no socket directory is created */
+	setenv("OPENMACFUSE_LOG", log, 1);
+	setenv("OPENMACFUSE_GUARD_WAIT_MS", "0", 1);
+	setenv("OPENMACFUSE_TRANSPORT", "tcp", 1);	/* only listens on a random 127.0.0.1 port, no socket directory is created */
 
 	test_destroy_on_failed_new(mnt);
 	test_mount_flags(mnt, log);
 	test_synth();
-	nfuse_mount_pid = 0;
-	CHECK(nfuse_mount_nfs_wait(100) == 1, "returns 1 at once when there is no mount_nfs");
-	CHECK(nfuse_end_reason(NULL)[0] == 0, "nfuse_end_reason(NULL) is the empty string");
+	openmacfuse_mount_pid = 0;
+	CHECK(openmacfuse_mount_nfs_wait(100) == 1, "returns 1 at once when there is no mount_nfs");
+	CHECK(openmacfuse_end_reason(NULL)[0] == 0, "openmacfuse_end_reason(NULL) is the empty string");
 
 	snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmp);
 	(void)!system(cmd);

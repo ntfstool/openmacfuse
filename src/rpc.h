@@ -4,8 +4,8 @@
  * Copyright 2026 The OpenMacFUSE Authors
  * SPDX-License-Identifier: MIT
  */
-#ifndef NFUSE_RPC_H
-#define NFUSE_RPC_H
+#ifndef OPENMACFUSE_RPC_H
+#define OPENMACFUSE_RPC_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -66,4 +66,4 @@ int rpc_read_record(int fd, uint8_t **buf, size_t *cap, size_t *len, size_t maxl
 /* Write the whole buffer (handles short writes and EINTR); returns 0 on success, -1 on failure */
 int rpc_write_all(int fd, const uint8_t *buf, size_t len);
 
-#endif /* NFUSE_RPC_H */
+#endif /* OPENMACFUSE_RPC_H */

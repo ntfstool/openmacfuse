@@ -4,7 +4,7 @@
 
 **Una biblioteca compatible con FUSE 2.x para macOS que no necesita extensión del kernel ni instalar nada.**
 
-OpenMacFUSE ejecuta un servidor NFSv4.0 dentro del proceso de tu sistema de archivos y lo monta con el cliente NFS que incluye macOS. Tus callbacks de `fuse_operations` no cambian; enlazas una única biblioteca estática, `libnfuse.a`, en lugar de una biblioteca FUSE.
+OpenMacFUSE ejecuta un servidor NFSv4.0 dentro del proceso de tu sistema de archivos y lo monta con el cliente NFS que incluye macOS. Tus callbacks de `fuse_operations` no cambian; enlazas una única biblioteca estática, `libopenmacfuse.a`, en lugar de una biblioteca FUSE.
 
 Es el motor de montaje integrado en [NTFSTool Pro](https://ntfstool.com), donde da servicio a volúmenes NTFS, ext2/3/4, exFAT y BitLocker. Se escribió para un producto que está en el mercado, y las mediciones que siguen proceden de ese trabajo.
 
@@ -71,17 +71,15 @@ Requisitos: macOS con las Xcode Command Line Tools. Nada más.
 ```sh
 git clone https://github.com/ntfstool/openmacfuse
 cd openmacfuse
-make              # build/libnfuse.a (+ build/nfuse-m0, an in-memory test server)
+make              # build/libopenmacfuse.a (+ build/openmacfuse-m0, an in-memory test server)
 make universal    # arm64 + x86_64
 make -C examples/hello
 mkdir -p /tmp/hello && examples/hello/hello /tmp/hello
-cat /tmp/hello/hello.txt      # Hello from nfuse
+cat /tmp/hello/hello.txt      # Hello from openmacfuse
 umount /tmp/hello             # hello exits after the unmount
 ```
 
 El primer montaje puede hacer que macOS muestre a la app que lo invoca la solicitud de permiso de «volúmenes de red». Es lo esperado: se trata de un montaje NFS.
-
-La biblioteca y sus identificadores se llaman `nfuse` (`libnfuse.a`, `nfuse.h`, `NFUSE_*`). OpenMacFUSE es el nombre del proyecto.
 
 ## Uso en tu sistema de archivos
 
@@ -92,7 +90,7 @@ La biblioteca y sus identificadores se llaman `nfuse` (`libnfuse.a`, `nfuse.h`, 
 
 ```sh
 cc -I/path/to/openmacfuse/include -c myfs.c
-cc -o myfs myfs.o /path/to/openmacfuse/build/libnfuse.a \
+cc -o myfs myfs.o /path/to/openmacfuse/build/libopenmacfuse.a \
    -lpthread -framework CoreFoundation -framework IOKit
 ```
 
@@ -124,25 +122,25 @@ El montaje está completo cuando `fuse_new` retorna. `fuse_loop` retorna despué
 | `rwsize=N` | tamaño de lectura/escritura de NFS (por defecto 262144) |
 | `nobrowse` | no mostrar el volumen en el Finder |
 | `nosuid`, `nodev`, `noexec` | se pasan al montaje |
-| `nfuse_case=insensitive\|sensitive` | búsqueda sin distinción de mayúsculas y minúsculas (por defecto). Vuelve automáticamente a `sensitive` cuando el volumen ya contiene nombres que solo difieren en mayúsculas y minúsculas |
-| `nfuse_xattr=adfile\|appledouble\|streams` | dónde se guardan los atributos extendidos. `adfile` (por defecto): la biblioteca convierte los archivos `._` del cliente en llamadas a tus `setxattr`/`getxattr`, de modo que no se almacena nada adicional en el volumen. `appledouble`: archivos `._` normales. `streams`: atributos con nombre de NFSv4, experimental, consulta «Limitaciones conocidas» |
-| `nfuse_nfc=1\|0` | guardar los nombres nuevos en Unicode NFC (por defecto 1). La búsqueda acepta NFC y NFD en ambos casos |
+| `openmacfuse_case=insensitive\|sensitive` | búsqueda sin distinción de mayúsculas y minúsculas (por defecto). Vuelve automáticamente a `sensitive` cuando el volumen ya contiene nombres que solo difieren en mayúsculas y minúsculas |
+| `openmacfuse_xattr=adfile\|appledouble\|streams` | dónde se guardan los atributos extendidos. `adfile` (por defecto): la biblioteca convierte los archivos `._` del cliente en llamadas a tus `setxattr`/`getxattr`, de modo que no se almacena nada adicional en el volumen. `appledouble`: archivos `._` normales. `streams`: atributos con nombre de NFSv4, experimental, consulta «Limitaciones conocidas» |
+| `openmacfuse_nfc=1\|0` | guardar los nombres nuevos en Unicode NFC (por defecto 1). La búsqueda acepta NFC y NFD en ambos casos |
 
-Las opciones habituales de FUSE (`local`, `allow_other`, `fsname`, …) se aceptan y se ignoran. Los programas que entran por `fuse_main` reciben valores por defecto conservadores (`nfuse_xattr=appledouble`, `nfuse_case=sensitive`), salvo que pasen ellos mismos estas opciones.
+Las opciones habituales de FUSE (`local`, `allow_other`, `fsname`, …) se aceptan y se ignoran. Los programas que entran por `fuse_main` reciben valores por defecto conservadores (`openmacfuse_xattr=appledouble`, `openmacfuse_case=sensitive`), salvo que pasen ellos mismos estas opciones.
 
 ### Variables de entorno
 
 | Variable | Valor por defecto | Efecto |
 |---|---|---|
-| `NFUSE_TRANSPORT` | `auto` | `unix`, `tcp` o `auto` (socket unix en macOS 26+, TCP en 127.0.0.1 antes) |
-| `NFUSE_LOG` | — | añadir el registro al final de este archivo |
-| `NFUSE_WATCHDOG_S` | 30 | segundos sin avance antes de considerar colgada una solicitud; 0 lo desactiva |
-| `NFUSE_WATCHDOG_MAX_S` | 600 | límite estricto para una solicitud; 0 lo desactiva |
-| `NFUSE_GUARD` | 1 | 0 = no iniciar el proceso guardián |
-| `NFUSE_GUARD_S` | 20 | segundos sin latido antes de que el proceso guardián dé el proceso por congelado |
-| `NFUSE_MOUNT_TIMEOUT_S` | 30 | tiempo de espera de `mount_nfs` |
+| `OPENMACFUSE_TRANSPORT` | `auto` | `unix`, `tcp` o `auto` (socket unix en macOS 26+, TCP en 127.0.0.1 antes) |
+| `OPENMACFUSE_LOG` | — | añadir el registro al final de este archivo |
+| `OPENMACFUSE_WATCHDOG_S` | 30 | segundos sin avance antes de considerar colgada una solicitud; 0 lo desactiva |
+| `OPENMACFUSE_WATCHDOG_MAX_S` | 600 | límite estricto para una solicitud; 0 lo desactiva |
+| `OPENMACFUSE_GUARD` | 1 | 0 = no iniciar el proceso guardián |
+| `OPENMACFUSE_GUARD_S` | 20 | segundos sin latido antes de que el proceso guardián dé el proceso por congelado |
+| `OPENMACFUSE_MOUNT_TIMEOUT_S` | 30 | tiempo de espera de `mount_nfs` |
 
-Los callbacks de extensión opcionales (plegado de mayúsculas y minúsculas, E/S de xattr por rangos, contador de avance para el watchdog, información del montaje) están declarados en [`include/nfuse.h`](include/nfuse.h).
+Los callbacks de extensión opcionales (plegado de mayúsculas y minúsculas, E/S de xattr por rangos, contador de avance para el watchdog, información del montaje) están declarados en [`include/openmacfuse.h`](include/openmacfuse.h).
 
 ## Cómo funciona
 

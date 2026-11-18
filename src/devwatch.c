@@ -40,9 +40,9 @@ static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_cv = PTHREAD_COND_INITIALIZER;
 static struct fuse *g_f;
 
-int nfuse_devwatch_wanted(void)
+int openmacfuse_devwatch_wanted(void)
 {
-	const char *d = getenv("NFUSE_WATCH_DEV"), *t = getenv("NFUSE_TEST_DEVLOST_FILE");
+	const char *d = getenv("OPENMACFUSE_WATCH_DEV"), *t = getenv("OPENMACFUSE_TEST_DEVLOST_FILE");
 
 	return (d && *d) || (t && *t);
 }
@@ -89,7 +89,7 @@ static int media_present(const char *bsd)
 	return 1;
 }
 
-uint64_t nfuse_devwatch_iostat(const char *bsd, int *ok)
+uint64_t openmacfuse_devwatch_iostat(const char *bsd, int *ok)
 {
 	io_service_t media;
 	CFTypeRef st;
@@ -119,9 +119,9 @@ uint64_t nfuse_devwatch_iostat(const char *bsd, int *ok)
 	return sum;
 }
 
-int nfuse_devwatch_prepare(void)
+int openmacfuse_devwatch_prepare(void)
 {
-	const char *d = getenv("NFUSE_WATCH_DEV"), *t = getenv("NFUSE_TEST_DEVLOST_FILE");
+	const char *d = getenv("OPENMACFUSE_WATCH_DEV"), *t = getenv("OPENMACFUSE_TEST_DEVLOST_FILE");
 	struct stat st;
 
 	g_have_dev = 0;
@@ -135,13 +135,13 @@ int nfuse_devwatch_prepare(void)
 		g_rdev = S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode) ? (uint64_t)st.st_rdev : (uint64_t)st.st_ino;
 		g_have_dev = 1;
 		bsd_name(g_dev, g_bsd, sizeof(g_bsd));
-		g_io_last = nfuse_devwatch_iostat(g_bsd, &g_iostat_ok);
+		g_io_last = openmacfuse_devwatch_iostat(g_bsd, &g_iostat_ok);
 		g_media_ok = g_bsd[0] && media_present(g_bsd);
 	}
 	return g_have_dev || g_lostfile[0] ? 0 : -1;
 }
 
-uint64_t nfuse_devwatch_progress(void)
+uint64_t openmacfuse_devwatch_progress(void)
 {
 	return atomic_load_explicit(&g_progress, memory_order_relaxed);
 }
@@ -152,7 +152,7 @@ static int dev_present(const char **why, const char **how, int *err)
 	struct stat st;
 
 	if (g_lostfile[0] && access(g_lostfile, F_OK) == 0) {
-		*why = "test hook NFUSE_TEST_DEVLOST_FILE";
+		*why = "test hook OPENMACFUSE_TEST_DEVLOST_FILE";
 		*how = "test_hook";
 		*err = ENXIO;
 		return 0;
@@ -205,7 +205,7 @@ static void *dw_thread(void *arg)
 		if (!dev_present(&why, &how, &err)) {
 			if (!reported) {
 				reported = 1;
-				nfuse_report("device_lost", "\"err\":%d,\"how\":\"%s\",\"probe_ms\":%d", err, how,
+				openmacfuse_report("device_lost", "\"err\":%d,\"how\":\"%s\",\"probe_ms\":%d", err, how,
 					     DW_PERIOD_MS);
 			}
 			/*
@@ -214,13 +214,13 @@ static void *dw_thread(void *arg)
 			 * instance; a call made before the instance exists has no effect and is repeated on the
 			 * next round. After that fuse_loop returns and stop reaps this thread.
 			 */
-			nfuse_device_lost(g_f, why);
+			openmacfuse_device_lost(g_f, why);
 			pthread_mutex_lock(&g_mu);
 			continue;
 		}
 		if (g_iostat_ok) {
 			int ok;
-			uint64_t v = nfuse_devwatch_iostat(g_bsd, &ok);
+			uint64_t v = openmacfuse_devwatch_iostat(g_bsd, &ok);
 
 			if (ok && v != g_io_last) {
 				g_io_last = v;
@@ -233,7 +233,7 @@ static void *dw_thread(void *arg)
 	return NULL;
 }
 
-int nfuse_devwatch_start(struct fuse *f)
+int openmacfuse_devwatch_start(struct fuse *f)
 {
 	if (g_running)
 		return 0;
@@ -245,7 +245,7 @@ int nfuse_devwatch_start(struct fuse *f)
 	return 0;
 }
 
-void nfuse_devwatch_stop(void)
+void openmacfuse_devwatch_stop(void)
 {
 	if (!g_running)
 		return;

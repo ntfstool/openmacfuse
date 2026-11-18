@@ -4,7 +4,7 @@
 
 **カーネル拡張もインストール作業も不要な、macOS 向けの FUSE 2.x 互換ライブラリ。**
 
-OpenMacFUSE は、ファイルシステムのプロセス内で NFSv4.0 サーバーを動かし、macOS 標準の NFS クライアントでそれをマウントします。`fuse_operations` のコールバックはそのまま使えます。FUSE ライブラリの代わりに、静的ライブラリ `libnfuse.a` を 1 つリンクするだけです。
+OpenMacFUSE は、ファイルシステムのプロセス内で NFSv4.0 サーバーを動かし、macOS 標準の NFS クライアントでそれをマウントします。`fuse_operations` のコールバックはそのまま使えます。FUSE ライブラリの代わりに、静的ライブラリ `libopenmacfuse.a` を 1 つリンクするだけです。
 
 [NTFSTool Pro](https://ntfstool.com) に組み込まれているマウントエンジンであり、NTFS、ext2/3/4、exFAT、BitLocker の各ボリュームを扱っています。出荷中の製品のために書かれたもので、以下の測定値はその開発過程で得られたものです。
 
@@ -71,17 +71,15 @@ OpenMacFUSE はこの方式を採り、サーバー全体をファイルシス�
 ```sh
 git clone https://github.com/ntfstool/openmacfuse
 cd openmacfuse
-make              # build/libnfuse.a (+ build/nfuse-m0, an in-memory test server)
+make              # build/libopenmacfuse.a (+ build/openmacfuse-m0, an in-memory test server)
 make universal    # arm64 + x86_64
 make -C examples/hello
 mkdir -p /tmp/hello && examples/hello/hello /tmp/hello
-cat /tmp/hello/hello.txt      # Hello from nfuse
+cat /tmp/hello/hello.txt      # Hello from openmacfuse
 umount /tmp/hello             # hello exits after the unmount
 ```
 
 初回のマウント時に、呼び出し元のアプリに対して macOS の「ネットワークボリューム」アクセス許可のダイアログが表示されることがあります。NFS マウントなので、これは想定どおりの動作です。
-
-ライブラリとその識別子の名前は `nfuse` です（`libnfuse.a`、`nfuse.h`、`NFUSE_*`）。OpenMacFUSE はプロジェクトの名前です。
 
 ## 自分のファイルシステムで使う
 
@@ -92,7 +90,7 @@ umount /tmp/hello             # hello exits after the unmount
 
 ```sh
 cc -I/path/to/openmacfuse/include -c myfs.c
-cc -o myfs myfs.o /path/to/openmacfuse/build/libnfuse.a \
+cc -o myfs myfs.o /path/to/openmacfuse/build/libopenmacfuse.a \
    -lpthread -framework CoreFoundation -framework IOKit
 ```
 
@@ -124,25 +122,25 @@ fuse_mount → fuse_new → fuse_set_signal_handlers → [daemon()] → fuse_loo
 | `rwsize=N` | NFS の読み書きサイズ（既定値 262144） |
 | `nobrowse` | ボリュームを Finder に表示しない |
 | `nosuid`, `nodev`, `noexec` | そのままマウントに渡される |
-| `nfuse_case=insensitive\|sensitive` | 大文字と小文字を区別しない検索（既定）。大文字と小文字だけが異なる名前がすでにボリューム上にある場合は、自動的に `sensitive` に切り替わる |
-| `nfuse_xattr=adfile\|appledouble\|streams` | 拡張属性の格納先。`adfile`（既定）: クライアントが作る `._` ファイルをライブラリが `setxattr`/`getxattr` の呼び出しに変換するため、ボリュームに余分なものは保存されない。`appledouble`: 通常の `._` ファイル。`streams`: NFSv4 の名前付き属性。実験的機能で、「既知の制限」を参照 |
-| `nfuse_nfc=1\|0` | 新しい名前を Unicode NFC で保存する（既定値 1）。どちらの設定でも、検索は NFC と NFD の両方を受け付ける |
+| `openmacfuse_case=insensitive\|sensitive` | 大文字と小文字を区別しない検索（既定）。大文字と小文字だけが異なる名前がすでにボリューム上にある場合は、自動的に `sensitive` に切り替わる |
+| `openmacfuse_xattr=adfile\|appledouble\|streams` | 拡張属性の格納先。`adfile`（既定）: クライアントが作る `._` ファイルをライブラリが `setxattr`/`getxattr` の呼び出しに変換するため、ボリュームに余分なものは保存されない。`appledouble`: 通常の `._` ファイル。`streams`: NFSv4 の名前付き属性。実験的機能で、「既知の制限」を参照 |
+| `openmacfuse_nfc=1\|0` | 新しい名前を Unicode NFC で保存する（既定値 1）。どちらの設定でも、検索は NFC と NFD の両方を受け付ける |
 
-一般的な FUSE オプション（`local`、`allow_other`、`fsname`、…）は受け付けたうえで無視します。`fuse_main` 経由で起動するプログラムには、これらのオプションを明示的に渡さない限り、保守的な既定値（`nfuse_xattr=appledouble`、`nfuse_case=sensitive`）が適用されます。
+一般的な FUSE オプション（`local`、`allow_other`、`fsname`、…）は受け付けたうえで無視します。`fuse_main` 経由で起動するプログラムには、これらのオプションを明示的に渡さない限り、保守的な既定値（`openmacfuse_xattr=appledouble`、`openmacfuse_case=sensitive`）が適用されます。
 
 ### 環境変数
 
 | 変数 | 既定値 | 効果 |
 |---|---|---|
-| `NFUSE_TRANSPORT` | `auto` | `unix`、`tcp`、または `auto`（macOS 26+ では unix ソケット、それより前は 127.0.0.1 の TCP） |
-| `NFUSE_LOG` | — | このファイルにログを追記する |
-| `NFUSE_WATCHDOG_S` | 30 | リクエストがハングしたとみなすまでの、進捗のない秒数。0 で無効 |
-| `NFUSE_WATCHDOG_MAX_S` | 600 | 1 リクエストあたりの絶対的な上限。0 で無効 |
-| `NFUSE_GUARD` | 1 | 0 = ガードプロセスを起動しない |
-| `NFUSE_GUARD_S` | 20 | ガードがプロセスをフリーズしたと判断するまでの、ハートビートのない秒数 |
-| `NFUSE_MOUNT_TIMEOUT_S` | 30 | `mount_nfs` のタイムアウト |
+| `OPENMACFUSE_TRANSPORT` | `auto` | `unix`、`tcp`、または `auto`（macOS 26+ では unix ソケット、それより前は 127.0.0.1 の TCP） |
+| `OPENMACFUSE_LOG` | — | このファイルにログを追記する |
+| `OPENMACFUSE_WATCHDOG_S` | 30 | リクエストがハングしたとみなすまでの、進捗のない秒数。0 で無効 |
+| `OPENMACFUSE_WATCHDOG_MAX_S` | 600 | 1 リクエストあたりの絶対的な上限。0 で無効 |
+| `OPENMACFUSE_GUARD` | 1 | 0 = ガードプロセスを起動しない |
+| `OPENMACFUSE_GUARD_S` | 20 | ガードがプロセスをフリーズしたと判断するまでの、ハートビートのない秒数 |
+| `OPENMACFUSE_MOUNT_TIMEOUT_S` | 30 | `mount_nfs` のタイムアウト |
 
-任意の拡張コールバック（ケースフォールディング、範囲指定の xattr 入出力、ウォッチドッグ用の進捗カウンタ、マウント情報）は [`include/nfuse.h`](include/nfuse.h) で宣言されています。
+任意の拡張コールバック（ケースフォールディング、範囲指定の xattr 入出力、ウォッチドッグ用の進捗カウンタ、マウント情報）は [`include/openmacfuse.h`](include/openmacfuse.h) で宣言されています。
 
 ## 仕組み
 

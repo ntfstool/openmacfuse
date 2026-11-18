@@ -1,13 +1,13 @@
 /*
- * hello.c - the smallest useful nfuse file system.
+ * hello.c - the smallest useful OpenMacFUSE file system.
  *
  * One read-only file, /hello.txt. Builds against the FUSE 2.6 high-level API
- * and links statically with libnfuse.a. No kernel extension and no third-party
- * component: nfuse serves NFSv4.0 inside this process and macOS's own
+ * and links statically with libopenmacfuse.a. No kernel extension and no third-party
+ * component: OpenMacFUSE serves NFSv4.0 inside this process and macOS's own
  * mount_nfs mounts it.
  *
  *   make -C ../.. lib
- *   cc -I../../include -o hello hello.c ../../build/libnfuse.a -lpthread -framework CoreFoundation -framework IOKit
+ *   cc -I../../include -o hello hello.c ../../build/libopenmacfuse.a -lpthread -framework CoreFoundation -framework IOKit
  *   mkdir -p /tmp/hello && ./hello /tmp/hello
  *   cat /tmp/hello/hello.txt
  *   umount /tmp/hello          # hello exits on its own after unmount
@@ -27,12 +27,12 @@
 #include <fuse_opt.h>
 
 static const char *hello_path = "/hello.txt";
-static const char *hello_str = "Hello from nfuse\n";
+static const char *hello_str = "Hello from openmacfuse\n";
 
 /*
- * nfuse addresses objects by inode number, so every object needs a stable,
+ * OpenMacFUSE addresses objects by inode number, so every object needs a stable,
  * unique, non-zero st_ino. (Many libfuse examples leave st_ino at 0 and rely
- * on the "use_ino" option being off; nfuse does not support that mode.)
+ * on the "use_ino" option being off; OpenMacFUSE does not support that mode.)
  */
 #define ROOT_INO	1
 #define HELLO_INO	2
@@ -67,7 +67,7 @@ static int hello_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	(void)fi;
 	if (strcmp(path, "/") != 0)
 		return -ENOENT;
-	/* nfuse lists a directory once and pages from a snapshot; "." and ".."
+	/* OpenMacFUSE lists a directory once and pages from a snapshot; "." and ".."
 	 * are accepted and skipped. */
 	filler(buf, ".", NULL, 0);
 	filler(buf, "..", NULL, 0);
@@ -106,12 +106,12 @@ static const struct fuse_operations hello_ops = {
 	.readdir = hello_readdir,
 	.open    = hello_open,
 	.read    = hello_read,
-	/* No .write callback: nfuse mounts the volume read-only. */
+	/* No .write callback: OpenMacFUSE mounts the volume read-only. */
 };
 
 int main(int argc, char *argv[])
 {
-	/* nfuse 1.0 provides the explicit FUSE 2.6 sequence; fuse_main() is
+	/* OpenMacFUSE 1.0 provides the explicit FUSE 2.6 sequence; fuse_main() is
 	 * not provided (see README, "Known limitations"). */
 	char *fake_argv[] = { argv[0], "-o", "volname=Hello", NULL };
 	struct fuse_args args = FUSE_ARGS_INIT(3, fake_argv);

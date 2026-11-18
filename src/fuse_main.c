@@ -4,7 +4,7 @@
  * For file systems whose main() is "one call to fuse_main and done" (typical third-party ext,
  * exFAT and BitLocker drivers). The behaviour is an independent implementation of the semantics
  * described in the public FUSE 2.x documentation; the order of going to the background was
- * redesigned around nfuse's constraints (see the fuse_main comment in include/fuse.h):
+ * redesigned around openmacfuse's constraints (see the fuse_main comment in include/fuse.h):
  *
  *   parent process                         child process (the final background process)
  *   parse command line, fix up arguments
@@ -19,9 +19,9 @@
  *
  * Why not "mount first, then daemon()" as a file system calling fuse_new directly would do: by
  * convention FUSE 2.x file systems start threads in the init callback (a statistics thread, for
- * example), so init has to be called in the final background process; nfuse calls init inside
+ * example), so init has to be called in the final background process; OpenMacFUSE calls init inside
  * fuse_new, before mounting, hence fork first and fuse_new second. The CoreFoundation classes
- * the child needs are initialised before the fork (nfuse_fork_warmup): when the caller has
+ * the child needs are initialised before the fork (openmacfuse_fork_warmup): when the caller has
  * already started threads (some ext drivers do), the objc runtime of macOS 27 does not allow
  * classes to be initialised in a forked child.
  *
@@ -44,7 +44,7 @@
 #include <unistd.h>
 
 #include "fuse.h"
-#include "nfuse.h"
+#include "openmacfuse.h"
 #include "devwatch.h"
 #include "names.h"
 #include "fuse_main_int.h"
@@ -167,16 +167,16 @@ static void print_help(const char *prog, int header)
 		"    -h   --help            print help\n"
 		"    -V   --version         print version\n"
 		"\n"
-		"FUSE options (nfuse: in-process NFSv4.0 server + the system mount_nfs):\n"
+		"FUSE options (openmacfuse: in-process NFSv4.0 server + the system mount_nfs):\n"
 		"    -d   -o debug          debug output (implies foreground)\n"
 		"    -f                     run in the foreground\n"
-		"    -s                     single-threaded (nfuse callbacks are serial anyway; accepted and ignored)\n"
+		"    -s                     single-threaded (openmacfuse callbacks are serial anyway; accepted and ignored)\n"
 		"    -o ro / rw             read-only / read-write\n"
 		"    -o volname=NAME        volume name (default: last component of the mount point)\n"
 		"    -o nobrowse            hide from Finder\n"
 		"    -o nosuid,nodev,noexec passed on to mount_nfs\n"
-		"    -o nfuse_case=sensitive|insensitive   default sensitive\n"
-		"    -o nfuse_xattr=appledouble|adfile     default appledouble\n"
+		"    -o openmacfuse_case=sensitive|insensitive   default sensitive\n"
+		"    -o openmacfuse_xattr=appledouble|adfile     default appledouble\n"
 		"    allow_other, default_permissions, local, fsname=, subtype= and similar options of other macOS FUSE implementations are accepted and ignored\n");
 }
 
@@ -234,13 +234,13 @@ static int find_volname(void *arg, const char *item)
 	return 0;
 }
 
-int nfuse_main_prepare_args(struct fuse_args *args, const char *mountpoint)
+int openmacfuse_main_prepare_args(struct fuse_args *args, const char *mountpoint)
 {
-	const char *env = getenv("NFUSE_OPTS");
+	const char *env = getenv("OPENMACFUSE_OPTS");
 	int has_vol = 0;
 
 	/* Defaults go first: the same option on the command line comes later, and the last one wins */
-	if (fuse_opt_insert_arg(args, 1, "-onfuse_case=sensitive,nfuse_xattr=appledouble"))
+	if (fuse_opt_insert_arg(args, 1, "-oopenmacfuse_case=sensitive,openmacfuse_xattr=appledouble"))
 		return -1;
 	if (env && *env) {
 		char *o = malloc(strlen(env) + 3);
@@ -315,7 +315,7 @@ static void default_detach(void)
 	}
 }
 
-static const struct nfuse_main_hooks default_hooks = {
+static const struct openmacfuse_main_hooks default_hooks = {
 	.mount = fuse_mount,
 	.fnew = fuse_new,
 	.set_signals = fuse_set_signal_handlers,
@@ -325,8 +325,8 @@ static const struct nfuse_main_hooks default_hooks = {
 	.unmount = fuse_unmount,
 	.destroy = fuse_destroy,
 	.detach = default_detach,
-	.mount_info = nfuse_get_mount_info,
-	.end_reason = nfuse_end_reason,
+	.mount_info = openmacfuse_get_mount_info,
+	.end_reason = openmacfuse_end_reason,
 };
 
 /* Parent: wait for the child to report the result; does not return */
@@ -351,7 +351,7 @@ static void parent_wait(pid_t child, int rfd)
 	_exit(4);
 }
 
-/* ---------- Telemetry (NFUSE_REPORT, see report.h) ---------- */
+/* ---------- Telemetry (OPENMACFUSE_REPORT, see report.h) ---------- */
 
 static double mono_s(void)
 {
@@ -378,30 +378,30 @@ static void report_start(int argc, char *argv[], int foreground, int watch)
 	if (sysctlbyname("hw.machine", arch, &l, NULL, 0) != 0)
 		snprintf(arch, sizeof(arch), "?");
 	arch[sizeof(arch) - 1] = 0;
-	nfuse_report("start", "\"version\":\"nfuse-fuse-%d.%d\",\"os\":\"%s\",\"arch\":\"%s\",\"uid\":%d,\"euid\":%d,"
+	openmacfuse_report("start", "\"version\":\"openmacfuse-fuse-%d.%d\",\"os\":\"%s\",\"arch\":\"%s\",\"uid\":%d,\"euid\":%d,"
 		     "\"foreground\":%d,\"watch_dev\":%d,\"cmd\":\"%s\"",
 		     FUSE_MAJOR_VERSION, FUSE_MINOR_VERSION, osv, arch, (int)getuid(), (int)geteuid(),
-		     foreground, watch, nfuse_report_esc(cmd, esc, sizeof(esc)));
+		     foreground, watch, openmacfuse_report_esc(cmd, esc, sizeof(esc)));
 }
 
-static void report_mount(const struct nfuse_main_hooks *h, struct fuse *f, int watch)
+static void report_mount(const struct openmacfuse_main_hooks *h, struct fuse *f, int watch)
 {
-	struct nfuse_mount_info mi;
+	struct openmacfuse_mount_info mi;
 	int iostat = 0;
 
-	if (nfuse_report_fd() < 0 || !h->mount_info || h->mount_info(f, &mi, sizeof(mi)) != 0)
+	if (openmacfuse_report_fd() < 0 || !h->mount_info || h->mount_info(f, &mi, sizeof(mi)) != 0)
 		return;
 	if (watch) {
-		const char *d = getenv("NFUSE_WATCH_DEV");
+		const char *d = getenv("OPENMACFUSE_WATCH_DEV");
 		const char *b = d ? strrchr(d, '/') : NULL;
 
 		b = b ? b + 1 : d;
 		if (b && b[0] == 'r' && strncmp(b + 1, "disk", 4) == 0)
 			b++;
-		(void)nfuse_devwatch_iostat(b, &iostat);
+		(void)openmacfuse_devwatch_iostat(b, &iostat);
 	}
 	/* fsync is up to the file system itself (fs); flush_ms does not apply (-1) */
-	nfuse_report("nfuse_mount", "\"case\":\"%s\",\"case_downgraded\":%d,\"case_conflicts\":%u,\"case_scan_complete\":%d,"
+	openmacfuse_report("openmacfuse_mount", "\"case\":\"%s\",\"case_downgraded\":%d,\"case_conflicts\":%u,\"case_scan_complete\":%d,"
 		     "\"xattr\":\"%s\",\"transport\":\"%s\",\"mount_s\":%.3f,\"browse\":%d,\"ro\":%d,\"rwsize\":%u,"
 		     "\"fsync\":\"fs\",\"flush_ms\":-1,\"watchdog_s\":%.0f,\"watchdog_max_s\":%.0f,\"guard\":%d,\"guard_s\":%.0f,"
 		     "\"tcp_guard\":%d,\"watch_dev\":%d,\"iostat\":%d",
@@ -414,28 +414,28 @@ static double g_t0;
 
 static void report_exit(int code, int ret, const char *reason)
 {
-	nfuse_report("exit", "\"code\":%d,\"ret\":%d,\"reason\":\"%s\",\"lasted_s\":%.1f", code, ret, reason,
+	openmacfuse_report("exit", "\"code\":%d,\"ret\":%d,\"reason\":\"%s\",\"lasted_s\":%.1f", code, ret, reason,
 		     g_t0 ? mono_s() - g_t0 : 0);
 }
 
 /* Watchdog callback (on the watchdog thread; only writes telemetry, returning 0 = use the library's default exit code 24) */
 static int ext_watchdog(const char *why, const char *op, double secs)
 {
-	nfuse_report("watchdog", "\"why\":\"%s\",\"op\":\"%s\",\"secs\":%.1f,\"io_done\":%llu", why, op, secs,
-		     (unsigned long long)nfuse_devwatch_progress());
+	openmacfuse_report("watchdog", "\"why\":\"%s\",\"op\":\"%s\",\"secs\":%.1f,\"io_done\":%llu", why, op, secs,
+		     (unsigned long long)openmacfuse_devwatch_progress());
 	return 0;
 }
 
 static int ext_report_fd(void)
 {
-	return nfuse_report_fd();
+	return openmacfuse_report_fd();
 }
 
-int nfuse_main_hooked(int argc, char *argv[], const struct fuse_operations *op,
-		      size_t op_size, void *user_data, const struct nfuse_main_hooks *hooks)
+int openmacfuse_main_hooked(int argc, char *argv[], const struct fuse_operations *op,
+		      size_t op_size, void *user_data, const struct openmacfuse_main_hooks *hooks)
 {
-	struct nfuse_main_hooks hk = default_hooks;
-	const struct nfuse_main_hooks *h = &hk;
+	struct openmacfuse_main_hooks hk = default_hooks;
+	const struct openmacfuse_main_hooks *h = &hk;
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 	struct fuse_chan *ch = NULL;
 	struct fuse *f = NULL;
@@ -462,7 +462,7 @@ int nfuse_main_hooked(int argc, char *argv[], const struct fuse_operations *op,
 		goto out;
 	}
 	if (c.version) {
-		fprintf(stderr, "FUSE library version: %d.%d (nfuse)\n", FUSE_MAJOR_VERSION,
+		fprintf(stderr, "FUSE library version: %d.%d (openmacfuse)\n", FUSE_MAJOR_VERSION,
 			FUSE_MINOR_VERSION);
 		goto out;
 	}
@@ -471,12 +471,12 @@ int nfuse_main_hooked(int argc, char *argv[], const struct fuse_operations *op,
 		rc = 2;
 		goto out;
 	}
-	if (nfuse_main_prepare_args(&args, c.mountpoint)) {
+	if (openmacfuse_main_prepare_args(&args, c.mountpoint)) {
 		rc = 1;
 		goto out;
 	}
 	if (c.single) {
-		/* Accepted and ignored: nfuse callbacks are serial anyway */
+		/* Accepted and ignored: OpenMacFUSE callbacks are serial anyway */
 	}
 
 	if (!c.foreground) {
@@ -488,10 +488,10 @@ int nfuse_main_hooked(int argc, char *argv[], const struct fuse_operations *op,
 		 * CoreFoundation: the objc classes behind it have to be initialised here, before the fork.
 		 * When the caller started threads before fuse_main (e.g. an ext driver reading bitmaps on
 		 * several threads), the objc runtime of macOS 27 aborts outright the first time these classes
-		 * are initialised in a forked child (see nfuse_fork_warmup in names.c).
+		 * are initialised in a forked child (see openmacfuse_fork_warmup in names.c).
 		 * Pure CF interfaces only; no IOKit / mach ports, no threads.
 		 */
-		nfuse_fork_warmup();
+		openmacfuse_fork_warmup();
 		if (pipe(pfd) < 0) {
 			perror("fuse: pipe");
 			rc = 5;
@@ -516,11 +516,11 @@ int nfuse_main_hooked(int argc, char *argv[], const struct fuse_operations *op,
 
 	/* Everything below runs in the final process (the background child, or this process when in the foreground) */
 	g_t0 = mono_s();
-	report = nfuse_report_open(argv && argc > 0 ? argv[0] : NULL) == 0;
-	watch = nfuse_devwatch_wanted();
-	if (watch && nfuse_devwatch_prepare() != 0) {
-		fprintf(stderr, "nfuse: device watcher: %s is not usable, not watching\n",
-			getenv("NFUSE_WATCH_DEV") ? getenv("NFUSE_WATCH_DEV") : "?");
+	report = openmacfuse_report_open(argv && argc > 0 ? argv[0] : NULL) == 0;
+	watch = openmacfuse_devwatch_wanted();
+	if (watch && openmacfuse_devwatch_prepare() != 0) {
+		fprintf(stderr, "openmacfuse: device watcher: %s is not usable, not watching\n",
+			getenv("OPENMACFUSE_WATCH_DEV") ? getenv("OPENMACFUSE_WATCH_DEV") : "?");
 		watch = 0;
 	}
 	if (report)
@@ -532,26 +532,26 @@ int nfuse_main_hooked(int argc, char *argv[], const struct fuse_operations *op,
 		 * case folding nor offset-based attribute I/O is registered). Nothing is registered when none
 		 * of them applies.
 		 */
-		struct nfuse_ext_ops ext;
+		struct openmacfuse_ext_ops ext;
 
 		memset(&ext, 0, sizeof(ext));
 		if (watch)
-			ext.progress = nfuse_devwatch_progress;
+			ext.progress = openmacfuse_devwatch_progress;
 		if (report) {
 			ext.watchdog = ext_watchdog;
 			ext.report_fd = ext_report_fd;
 		}
 		if (watch || report)
-			nfuse_set_ext_ops(&ext, sizeof(ext));
+			openmacfuse_set_ext_ops(&ext, sizeof(ext));
 	}
 	/* The device watcher starts before the mount handshake: progress is reported during the handshake too (used to detect a stuck handshake), and unplugging is detected */
-	if (watch && nfuse_devwatch_start(NULL))
+	if (watch && openmacfuse_devwatch_start(NULL))
 		watch = 0;
 
 	ch = h->mount(c.mountpoint, &args);
 	if (!ch) {
 		fprintf(stderr, "fuse: mount point %s is not usable\n", c.mountpoint);
-		nfuse_report("mount_fail", "\"stage\":\"fuse_mount\",\"ret\":3,\"ms\":%.0f", (mono_s() - g_t0) * 1000);
+		openmacfuse_report("mount_fail", "\"stage\":\"fuse_mount\",\"ret\":3,\"ms\":%.0f", (mono_s() - g_t0) * 1000);
 		rc = 3;
 		reason = "mount_failed";
 		goto stop_watch;
@@ -568,7 +568,7 @@ int nfuse_main_hooked(int argc, char *argv[], const struct fuse_operations *op,
 		/* fuse_new already printed / logged; the listening socket at the mount point etc. are cleaned up by fuse_unmount */
 		h->unmount(c.mountpoint, ch);
 		ch = NULL;
-		nfuse_report("mount_fail", "\"stage\":\"fuse_new\",\"ret\":4,\"ms\":%.0f", (mono_s() - g_t0) * 1000);
+		openmacfuse_report("mount_fail", "\"stage\":\"fuse_new\",\"ret\":4,\"ms\":%.0f", (mono_s() - g_t0) * 1000);
 		rc = 4;
 		reason = "mount_failed";
 		goto stop_watch;
@@ -591,7 +591,7 @@ int nfuse_main_hooked(int argc, char *argv[], const struct fuse_operations *op,
 		pfd[1] = -1;
 		if (n != 1) {
 			/* The parent is already gone: the caller gave up waiting and nobody would look after the mount -- unmount and exit */
-			syslog(LOG_WARNING, "nfuse: caller gave up before mount completed; unmounting %s",
+			syslog(LOG_WARNING, "openmacfuse: caller gave up before mount completed; unmounting %s",
 			       c.mountpoint);
 			rc = 5;
 			reason = "caller_gone";
@@ -608,7 +608,7 @@ teardown_sig:
 	h->remove_signals(h->session(f));
 teardown:
 	if (watch)
-		nfuse_devwatch_stop();
+		openmacfuse_devwatch_stop();
 	watch = 0;
 	h->unmount(c.mountpoint, ch);
 	ch = NULL;
@@ -616,9 +616,9 @@ teardown:
 	f = NULL;
 stop_watch:
 	if (watch)
-		nfuse_devwatch_stop();
+		openmacfuse_devwatch_stop();
 	if (report)
-		report_exit(strcmp(reason, "device_lost") == 0 ? NFUSE_EXIT_DEVICE_LOST : rc, rc, reason);
+		report_exit(strcmp(reason, "device_lost") == 0 ? OPENMACFUSE_EXIT_DEVICE_LOST : rc, rc, reason);
 out:
 	if (pfd[1] >= 0)
 		close(pfd[1]);
@@ -630,7 +630,7 @@ out:
 int fuse_main_real(int argc, char *argv[], const struct fuse_operations *op,
 		   size_t op_size, void *user_data)
 {
-	return nfuse_main_hooked(argc, argv, op, op_size, user_data, NULL);
+	return openmacfuse_main_hooked(argc, argv, op, op_size, user_data, NULL);
 }
 
 /*
@@ -643,5 +643,5 @@ int fuse_main_real(int argc, char *argv[], const struct fuse_operations *op,
 int fuse_main(int argc, char *argv[], const struct fuse_operations *op, void *user_data);
 int fuse_main(int argc, char *argv[], const struct fuse_operations *op, void *user_data)
 {
-	return nfuse_main_hooked(argc, argv, op, sizeof(*op), user_data, NULL);
+	return openmacfuse_main_hooked(argc, argv, op, sizeof(*op), user_data, NULL);
 }

@@ -4,8 +4,8 @@
  * Copyright 2026 The OpenMacFUSE Authors
  * SPDX-License-Identifier: MIT
  */
-#ifndef NFUSE_MOUNTER_H
-#define NFUSE_MOUNTER_H
+#ifndef OPENMACFUSE_MOUNTER_H
+#define OPENMACFUSE_MOUNTER_H
 
 #include <stddef.h>
 
@@ -15,25 +15,25 @@
  * Run /sbin/mount_nfs -o <opts> <spec> <mnt>, waiting at most timeout_s seconds.
  * Returns 0 on success; -1 on failure, with mount_nfs's error output in errbuf; -2 on timeout:
  * **mount_nfs is not killed** (a mount_nfs in the middle of the handshake must never be killed),
- * nfuse_mount_pid is still its pid, and the caller, after failing the handshake, waits for it to
- * exit with nfuse_mount_nfs_wait.
+ * openmacfuse_mount_pid is still its pid, and the caller, after failing the handshake, waits for it to
+ * exit with openmacfuse_mount_nfs_wait.
  * The server thread must already be running before this is called: the mount handshake takes
  * place during this call.
  */
-int nfuse_run_mount_nfs(const char *spec, const char *opts, const char *mnt,
+int openmacfuse_run_mount_nfs(const char *spec, const char *opts, const char *mnt,
 		       int timeout_s, char *errbuf, size_t errlen);
 
 /*
  * pid of the running mount_nfs (0 if none). While the handshake is in progress (it is still
  * running), do not kill it and do not umount -f the mount point.
  */
-extern volatile pid_t nfuse_mount_pid;
+extern volatile pid_t openmacfuse_mount_pid;
 
 /*
  * Wait up to ms milliseconds for a mount_nfs left behind by a timeout to exit on its own: returns
- * 1 and clears nfuse_mount_pid if it has exited (or there was none), 0 if it is still running.
+ * 1 and clears openmacfuse_mount_pid if it has exited (or there was none), 0 if it is still running.
  */
-int nfuse_mount_nfs_wait(int ms);
+int openmacfuse_mount_nfs_wait(int ms);
 
 /*
  * Whether mnt is an NFS mount in the mount table (without contacting the server: getfsstat
@@ -42,12 +42,12 @@ int nfuse_mount_nfs_wait(int ms);
  * a different mount stacked on the same path (e.g. a previous one that was not unmounted cleanly)
  * does not count as ours.
  */
-int nfuse_is_nfs_mounted(const char *mnt, const char *from);
+int openmacfuse_is_nfs_mounted(const char *mnt, const char *from);
 
 /*
  * Unmount: try a normal unmount first; if busy, wait a moment and then force. Returns 0 on success.
  */
-int nfuse_unmount(const char *mnt, const char *from,
+int openmacfuse_unmount(const char *mnt, const char *from,
 		 void (*log)(const char *fmt, ...));
 
 /*
@@ -55,7 +55,7 @@ int nfuse_unmount(const char *mnt, const char *from,
  * the client's pending requests fail immediately).
  * Returns 0 on success.
  */
-int nfuse_unmount_force(const char *mnt, const char *from,
+int openmacfuse_unmount_force(const char *mnt, const char *from,
 		       void (*log)(const char *fmt, ...));
 
-#endif /* NFUSE_MOUNTER_H */
+#endif /* OPENMACFUSE_MOUNTER_H */

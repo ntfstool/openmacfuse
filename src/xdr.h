@@ -11,8 +11,8 @@
  * Copyright 2026 The OpenMacFUSE Authors
  * SPDX-License-Identifier: MIT
  */
-#ifndef NFUSE_XDR_H
-#define NFUSE_XDR_H
+#ifndef OPENMACFUSE_XDR_H
+#define OPENMACFUSE_XDR_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -79,4 +79,4 @@ void	 xdr_truncate(xdr_enc_t *e, size_t len);
 
 #define XDR_PAD(n)	(((n) + 3u) & ~3u)
 
-#endif /* NFUSE_XDR_H */
+#endif /* OPENMACFUSE_XDR_H */

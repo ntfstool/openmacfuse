@@ -1,11 +1,12 @@
-# OpenMacFUSE (libnfuse): in-process NFSv4.0 server + FUSE 2.x compatible library for macOS
+# OpenMacFUSE (libopenmacfuse): in-process NFSv4.0 server + FUSE 2.x compatible library for macOS
 #
 # Copyright 2026 The OpenMacFUSE Authors
 # SPDX-License-Identifier: MIT
 #
-#   make            build the read-only prototype server build/nfuse-m0 and the library build/libnfuse.a (native architecture)
+#   make            build the read-only prototype server build/openmacfuse-m0 and the library build/libopenmacfuse.a (native architecture)
 #   make universal  same, as an arm64 + x86_64 universal build
 #   make lib        build only the library (what an outer build script would call)
+#   make test       unit tests (nothing is mounted) plus the naming check
 #   make clean
 #
 # Overridable: ARCHFLAGS (e.g. "-arch arm64 -arch x86_64"), MINVER (default 10.15)
@@ -31,19 +32,19 @@ BUILD = build
 OBJDIR = $(BUILD)/obj
 LIB_OBJS = $(patsubst src/%.c,$(OBJDIR)/%.o,$(LIB_SRCS))
 
-all: $(BUILD)/nfuse-m0 $(BUILD)/libnfuse.a
+all: $(BUILD)/openmacfuse-m0 $(BUILD)/libopenmacfuse.a
 
-lib: $(BUILD)/libnfuse.a
+lib: $(BUILD)/libopenmacfuse.a
 
 $(OBJDIR)/%.o: src/%.c $(HDRS) Makefile
 	@mkdir -p $(OBJDIR)
 	$(CC) $(ALL_CFLAGS) -c -o $@ $<
 
-$(BUILD)/libnfuse.a: $(LIB_OBJS)
+$(BUILD)/libopenmacfuse.a: $(LIB_OBJS)
 	@rm -f $@
 	libtool -static -o $@ $(LIB_OBJS)
 
-$(BUILD)/nfuse-m0: $(M0_SRCS) $(HDRS) Makefile
+$(BUILD)/openmacfuse-m0: $(M0_SRCS) $(HDRS) Makefile
 	@mkdir -p $(BUILD)
 	$(CC) $(ALL_CFLAGS) -o $@ $(M0_SRCS) $(ALL_LDFLAGS)
 
@@ -56,10 +57,11 @@ universal:
 TEST_LDFLAGS = $(ALL_LDFLAGS) -framework IOKit
 UNIT_TESTS = $(BUILD)/unit_fuse_opt $(BUILD)/unit_fuse_main $(BUILD)/unit_fuse_lib $(BUILD)/unit_fork_cf
 
-$(BUILD)/unit_%: tests/unit_%.c $(BUILD)/libnfuse.a $(HDRS)
-	$(CC) $(ALL_CFLAGS) -o $@ $< $(BUILD)/libnfuse.a $(TEST_LDFLAGS)
+$(BUILD)/unit_%: tests/unit_%.c $(BUILD)/libopenmacfuse.a $(HDRS)
+	$(CC) $(ALL_CFLAGS) -o $@ $< $(BUILD)/libopenmacfuse.a $(TEST_LDFLAGS)
 
 test: $(UNIT_TESTS)
+	@sh tests/check-names.sh || exit 1
 	@for t in $(UNIT_TESTS); do echo "== $$t"; $$t || exit 1; done
 
 clean:

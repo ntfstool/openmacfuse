@@ -18,7 +18,7 @@
 
 #include "names.h"
 
-int nfuse_name_is_ascii(const char *s, size_t n)
+int openmacfuse_name_is_ascii(const char *s, size_t n)
 {
 	size_t i;
 
@@ -28,14 +28,14 @@ int nfuse_name_is_ascii(const char *s, size_t n)
 	return 1;
 }
 
-int nfuse_name_nfc(const char *in, size_t inlen, char *out, size_t outsz)
+int openmacfuse_name_nfc(const char *in, size_t inlen, char *out, size_t outsz)
 {
 	CFStringRef s;
 	CFMutableStringRef m;
 	CFIndex used = 0, len;
 	int ret = -1;
 
-	if (nfuse_name_is_ascii(in, inlen)) {
+	if (openmacfuse_name_is_ascii(in, inlen)) {
 		if (inlen + 1 > outsz)
 			return -1;
 		memcpy(out, in, inlen);
@@ -122,7 +122,7 @@ static int utf8_enc(uint32_t cp, char *o)
 	return 4;
 }
 
-int nfuse_name_fold_default(const char *in, char *out, size_t outsz)
+int openmacfuse_name_fold_default(const char *in, char *out, size_t outsz)
 {
 	const unsigned char *p = (const unsigned char *)in;
 	size_t n = strlen(in), i = 0, o = 0;
@@ -149,13 +149,13 @@ int nfuse_name_fold_default(const char *in, char *out, size_t outsz)
 	return (int)o;
 }
 
-int nfuse_name_key(const char *name, size_t nl, int ci, nfuse_fold_fn fold,
+int openmacfuse_name_key(const char *name, size_t nl, int ci, openmacfuse_fold_fn fold,
 		   char *out, size_t outsz)
 {
-	char tmp[NFUSE_KEY_MAX];
+	char tmp[OPENMACFUSE_KEY_MAX];
 	int n;
 
-	n = nfuse_name_nfc(name, nl, tmp, sizeof(tmp));
+	n = openmacfuse_name_nfc(name, nl, tmp, sizeof(tmp));
 	if (n < 0) {
 		if (nl + 1 > sizeof(tmp))
 			nl = sizeof(tmp) - 1;
@@ -169,7 +169,7 @@ int nfuse_name_key(const char *name, size_t nl, int ci, nfuse_fold_fn fold,
 		memcpy(out, tmp, (size_t)n + 1);
 		return n;
 	}
-	if (nfuse_name_is_ascii(tmp, (size_t)n)) {
+	if (openmacfuse_name_is_ascii(tmp, (size_t)n)) {
 		int i;
 
 		if ((size_t)n + 1 > outsz)
@@ -179,9 +179,9 @@ int nfuse_name_key(const char *name, size_t nl, int ci, nfuse_fold_fn fold,
 		out[n] = 0;
 		return n;
 	}
-	n = (fold ? fold : nfuse_name_fold_default)(tmp, out, outsz);
+	n = (fold ? fold : openmacfuse_name_fold_default)(tmp, out, outsz);
 	if (n < 0)
-		n = nfuse_name_fold_default(tmp, out, outsz);
+		n = openmacfuse_name_fold_default(tmp, out, outsz);
 	return n;
 }
 
@@ -191,12 +191,12 @@ int nfuse_name_key(const char *name, size_t nl, int ci, nfuse_fold_fn fold,
  * class is initialised for the first time in the child (observed: SIGABRT the first time the
  * driver did NFC in the child, with performForkChildInitialize on the stack).
  */
-void nfuse_names_warmup(void)
+void openmacfuse_names_warmup(void)
 {
 	char out[64];
 
-	(void)nfuse_name_nfc("e\xcc\x81\xe1\x84\x80\xe1\x85\xa1", 9, out, sizeof(out));
-	(void)nfuse_name_fold_default("\xc3\xa9", out, sizeof(out));
+	(void)openmacfuse_name_nfc("e\xcc\x81\xe1\x84\x80\xe1\x85\xa1", 9, out, sizeof(out));
+	(void)openmacfuse_name_fold_default("\xc3\xa9", out, sizeof(out));
 }
 
 /*
@@ -215,7 +215,7 @@ void nfuse_names_warmup(void)
  * back as dictionary / number / string / data / array / boolean).
  * Only plain CF interfaces are used here: no IOKit calls (no touching mach ports before fork) and no threads.
  */
-void nfuse_fork_warmup(void)
+void openmacfuse_fork_warmup(void)
 {
 	static const UInt8 bytes[4] = { 1, 2, 3, 4 };
 	long long n = 1;
@@ -230,7 +230,7 @@ void nfuse_fork_warmup(void)
 	CFSetRef set;
 	const void *keys[1], *vals[1];
 
-	nfuse_names_warmup();
+	openmacfuse_names_warmup();
 	k = CFStringCreateWithCString(kCFAllocatorDefault, "BSD Name", kCFStringEncodingUTF8);
 	v = CFStringCreateWithBytes(kCFAllocatorDefault, (const UInt8 *)"disk", 4,
 				    kCFStringEncodingUTF8, false);
@@ -305,7 +305,7 @@ void nfuse_fork_warmup(void)
 		CFRelease(data);
 }
 
-uint64_t nfuse_hash_bytes(const void *p, size_t n)
+uint64_t openmacfuse_hash_bytes(const void *p, size_t n)
 {
 	const unsigned char *s = p;
 	uint64_t h = 0xcbf29ce484222325ull;

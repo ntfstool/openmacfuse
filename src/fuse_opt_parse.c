@@ -4,7 +4,7 @@
  * Independent implementation of the semantics described in the comments of the public FUSE 2.x
  * headers (template syntax: see include/fuse_opt.h).
  * Kept in its own file: only programs that use it (a FUSE file system calling fuse_opt_parse,
- * fuse_main) pull it in from libnfuse.a at link time.
+ * fuse_main) pull it in from libopenmacfuse.a at link time.
  *
  * Copyright 2026 The OpenMacFUSE Authors
  * SPDX-License-Identifier: MIT
@@ -208,7 +208,7 @@ static int process_opt(struct optctx *c, const char *arg, int is_opt, const char
 			}
 			a = joined;
 		}
-		if (o->offset == NFUSE_OPT_OFFSET_KEY) {
+		if (o->offset == OPENMACFUSE_OPT_OFFSET_KEY) {
 			if (o->value == FUSE_OPT_KEY_DISCARD)
 				continue;
 			if (o->value == FUSE_OPT_KEY_KEEP || !c->proc) {

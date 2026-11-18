@@ -8,8 +8,8 @@
  * Copyright 2026 The OpenMacFUSE Authors
  * SPDX-License-Identifier: MIT
  */
-#ifndef NFUSE_NFS4_PROT_H
-#define NFUSE_NFS4_PROT_H
+#ifndef OPENMACFUSE_NFS4_PROT_H
+#define OPENMACFUSE_NFS4_PROT_H
 
 /* ---------- ONC RPC (RFC 5531) ---------- */
 #define RPC_VERSION		2
@@ -283,4 +283,4 @@ enum nfs4_attr {
 #define DATA_SYNC4	1
 #define FILE_SYNC4	2
 
-#endif /* NFUSE_NFS4_PROT_H */
+#endif /* OPENMACFUSE_NFS4_PROT_H */

@@ -1,12 +1,12 @@
 /*
- * fuse.h -- FUSE 2.x compatibility header of nfuse: high-level (path-based) interface
+ * fuse.h -- FUSE 2.x compatibility header of openmacfuse: high-level (path-based) interface
  *
  * Written independently from the public definition of the FUSE 2.x high-level interface: the
  * names, parameters and semantics of the callbacks match the public interface (0 on success,
  * negative errno on failure), plus the getxtimes / setcrtime / setbkuptime / setchgtime
  * extensions common on the Mac and getxattr / setxattr with a position parameter.
  *
- * Differences from traditional FUSE (implemented in libnfuse.a):
+ * Differences from traditional FUSE (implemented in libopenmacfuse.a):
  *   - no kernel FUSE module and no separate helper server process: the library runs an NFSv4.0
  *     server inside this process and mounts it with the system's own mount_nfs;
  *   - fuse_loop has the library's server thread handle the requests; callbacks run serially
@@ -17,18 +17,18 @@
  * Copyright 2026 The OpenMacFUSE Authors
  * SPDX-License-Identifier: MIT
  */
-#ifndef NFUSE_FUSE_H
-#define NFUSE_FUSE_H
+#ifndef OPENMACFUSE_FUSE_H
+#define OPENMACFUSE_FUSE_H
 
 #ifndef FUSE_USE_VERSION
 #define FUSE_USE_VERSION 26
 #endif
-/* FUSE_USE_VERSION 26-29 is supported (the 2.6-2.9 high-level interface has a single layout in nfuse); older compatibility interfaces and 3.x are not */
+/* FUSE_USE_VERSION 26-29 is supported (the 2.6-2.9 high-level interface has a single layout in OpenMacFUSE); older compatibility interfaces and 3.x are not */
 #if FUSE_USE_VERSION < 26
-#error "nfuse only supports FUSE_USE_VERSION 26-29"
+#error "openmacfuse only supports FUSE_USE_VERSION 26-29"
 #endif
 #if FUSE_USE_VERSION >= 30
-#error "nfuse only supports the FUSE 2.x interface (FUSE_USE_VERSION 26-29), not 3.x"
+#error "openmacfuse only supports the FUSE 2.x interface (FUSE_USE_VERSION 26-29), not 3.x"
 #endif
 
 #include <fcntl.h>
@@ -129,7 +129,7 @@ struct fuse_operations {
 
 	/*
 	 * A few more callbacks from 2.8 / 2.9, present only so that file systems that set them compile
-	 * (filled in by name with designated initialisers, so their position does not matter). nfuse
+	 * (filled in by name with designated initialisers, so their position does not matter). OpenMacFUSE
 	 * never calls them: poll (NFS has no corresponding operation), read_buf / write_buf (only
 	 * read / write are used; a file system that provides write_buf but no write is mounted
 	 * read-only). lock / flock / ioctl / bmap / fallocate are not called either.
@@ -171,17 +171,17 @@ struct fuse_context *fuse_get_context(void);
 struct fuse_session *fuse_get_session(struct fuse *f);
 
 /*
- * nfuse extension (not part of FUSE 2.x): called by the file system when it finds that the
+ * OpenMacFUSE extension (not part of FUSE 2.x): called by the file system when it finds that the
  * underlying device is gone (unplugged, power loss); may be called from any thread, and more
  * than once. From then on every NFS request is answered with NFS4ERR_IO at once (the client
  * hands the application EIO and does not retry) and no longer reaches the file system callbacks
  * (except operations such as PUTFH and LOCKU that only touch server state; CLOSE also returns
  * IO so that close() reports the error); fuse_loop returns shortly after and fuse_unmount goes
  * straight to a forced unmount. reason is written to the log.
- * Use #ifdef NFUSE_HAS_DEVICE_LOST to test for availability (other FUSE implementations do not have it).
+ * Use #ifdef OPENMACFUSE_HAS_DEVICE_LOST to test for availability (other FUSE implementations do not have it).
  */
-#define NFUSE_HAS_DEVICE_LOST 1
-void nfuse_device_lost(struct fuse *f, const char *reason);
+#define OPENMACFUSE_HAS_DEVICE_LOST 1
+void openmacfuse_device_lost(struct fuse *f, const char *reason);
 
 /*
  * ---------- All-in-one fuse_main (src/fuse_main.c) ----------
@@ -190,7 +190,7 @@ void nfuse_device_lost(struct fuse *f, const char *reason);
  * go to the background -> handle requests until unmounted -> unmount -> return. Without -f / -d
  * it goes to the background, with the same semantics as FUSE 2.x: the init callback is called
  * in the background process.
- * nfuse completes the mount inside fuse_new, so the order is: fork first, the child mounts; the
+ * OpenMacFUSE completes the mount inside fuse_new, so the order is: fork first, the child mounts; the
  * parent waits for the child's report -- once mounted the parent calls _exit(0) directly (it
  * does not return to the caller, so the file system's clean-up code does not run a second time
  * in the parent); if the mount failed it waits for the child to exit and exits with the child's
@@ -209,23 +209,23 @@ void nfuse_device_lost(struct fuse *f, const char *reason);
  *
  * Default options fuse_main adds on its own (each can be overridden by the same option on the
  * command line / in the environment variable; the last one wins):
- *   nfuse_case=sensitive    generic FUSE file systems are exported case-sensitive (a file system
+ *   openmacfuse_case=sensitive    generic FUSE file systems are exported case-sensitive (a file system
  *                           that calls fuse_new directly still gets the library default, insensitive)
- *   nfuse_xattr=appledouble the client writes `._X` files itself. adfile requires the file
+ *   openmacfuse_xattr=appledouble the client writes `._X` files itself. adfile requires the file
  *                           system's setxattr to accept attribute names without a namespace
  *                           prefix such as com.apple.*; some ext drivers reject those (which
  *                           makes Finder copies fail)
  *   volname=<last component of the mount point> when no volname was given (some drivers swallow
  *                           the caller's -o volname)
  * Environment variables (only honoured by fuse_main):
- *   NFUSE_OPTS=<a,b=c>      appended to the end of the -o options (for programs that swallow -o)
- *   NFUSE_WATCH_DEV=<device>  watch the underlying device: node gone / device replaced ->
- *                           nfuse_device_lost (requests return IO, forced unmount, exit); the
+ *   OPENMACFUSE_OPTS=<a,b=c>      appended to the end of the -o options (for programs that swallow -o)
+ *   OPENMACFUSE_WATCH_DEV=<device>  watch the underlying device: node gone / device replaced ->
+ *                           openmacfuse_device_lost (requests return IO, forced unmount, exit); the
  *                           I/O counts of that device (IOKit statistics) also serve as the
  *                           watchdog's "backend progress"
- *   NFUSE_TEST_DEVLOST_FILE=<file>  test hook: this file appearing = the device is gone
- *   NFUSE_REPORT=<jsonl file> structured telemetry (start / nfuse_mount / mount_fail /
- *                           device_lost / watchdog / nfuse_guard / exit; format in src/report.h)
+ *   OPENMACFUSE_TEST_DEVLOST_FILE=<file>  test hook: this file appearing = the device is gone
+ *   OPENMACFUSE_REPORT=<jsonl file> structured telemetry (start / openmacfuse_mount / mount_fail /
+ *                           device_lost / watchdog / openmacfuse_guard / exit; format in src/report.h)
  * The options nosuid / nodev / noexec are passed on to mount_nfs by the library (fuse_lib.c, so
  * they also apply to file systems that do not use fuse_main).
  * Handshake stuck / mount_nfs timeout: the library takes over the connection and answers IO so
@@ -238,11 +238,11 @@ int fuse_main_real(int argc, char *argv[], const struct fuse_operations *op,
 #define fuse_main(argc, argv, op, user_data) \
 	fuse_main_real(argc, argv, op, sizeof(*(op)), user_data)
 
-/* nfuse callbacks run serially anyway: the multi-threaded variant is the same as fuse_loop */
+/* OpenMacFUSE callbacks run serially anyway: the multi-threaded variant is the same as fuse_loop */
 int fuse_loop_mt(struct fuse *f);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* NFUSE_FUSE_H */
+#endif /* OPENMACFUSE_FUSE_H */
