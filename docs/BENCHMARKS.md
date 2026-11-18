@@ -41,11 +41,11 @@ macOS 13, 14, 15 and 26: not measured.
 | Sequential read, 1 GB | 4491 MB/s | 2129 MB/s |
 | Sequential write, 1 GB (including `sync`) | 1488 MB/s | 1181 MB/s |
 
-Directory listing, 40,000 files, `time ls dir | wc -l`, machine B, same image, measured on 2026-11-17 with the current defaults:
+Directory listing, 40,000 files, `time ls dir | wc -l`, machine B, same image, measured on 2026-11-18 with the current defaults:
 
 | Test | OpenMacFUSE | FUSE-T 1.0.49 |
 |---|---|---|
-| First listing after mount | 4.06 s | 7.90 s |
+| First listing after mount | 4.03 s | 7.87 s |
 | Second listing | 0.53 s | 0.53 s |
 
 The first listing includes the work that keeps `._` AppleDouble files out of the listing (`openmacfuse_xattr=adfile`, the default).

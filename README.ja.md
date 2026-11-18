@@ -49,8 +49,8 @@ OpenMacFUSE はこの方式を採り、サーバー全体をファイルシス�
 
 | OpenMacFUSE | FUSE-T 1.0.49 |
 |---|---|
-| ![ターミナル: OpenMacFUSE は 40,000 個のファイルを 4.06 s で一覧表示、43 MB](docs/images/terminal-openmacfuse.png) | ![ターミナル: FUSE-T は 40,000 個のファイルを 7.90 s で一覧表示、209 MB](docs/images/terminal-fuse-t.png) |
-| 初回の一覧表示 4.06 s、フットプリント 43 MB | 初回の一覧表示 7.90 s、フットプリント 209 MB |
+| ![ターミナル: OpenMacFUSE は 40,000 個のファイルを 4.03 s で一覧表示、44 MB](docs/images/terminal-openmacfuse.png) | ![ターミナル: FUSE-T は 40,000 個のファイルを 7.87 s で一覧表示、207 MB](docs/images/terminal-fuse-t.png) |
+| 初回の一覧表示 4.03 s、フットプリント 44 MB | 初回の一覧表示 7.87 s、フットプリント 207 MB |
 
 ### 異常が起きたとき
 

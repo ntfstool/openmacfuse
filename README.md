@@ -49,8 +49,8 @@ The same volume image mounted on an Intel Mac running macOS 12.7.6, listing a di
 
 | OpenMacFUSE | FUSE-T 1.0.49 |
 |---|---|
-| ![Terminal: OpenMacFUSE lists 40,000 files in 4.06 s, 43 MB](docs/images/terminal-openmacfuse.png) | ![Terminal: FUSE-T lists 40,000 files in 7.90 s, 209 MB](docs/images/terminal-fuse-t.png) |
-| first listing 4.06 s, footprint 43 MB | first listing 7.90 s, footprint 209 MB |
+| ![Terminal: OpenMacFUSE lists 40,000 files in 4.03 s, 44 MB](docs/images/terminal-openmacfuse.png) | ![Terminal: FUSE-T lists 40,000 files in 7.87 s, 207 MB](docs/images/terminal-fuse-t.png) |
+| first listing 4.03 s, footprint 44 MB | first listing 7.87 s, footprint 207 MB |
 
 ### When things go wrong
 

@@ -49,8 +49,8 @@ La misma imagen de volumen montada en un Mac Intel con macOS 12.7.6, listando un
 
 | OpenMacFUSE | FUSE-T 1.0.49 |
 |---|---|
-| ![Terminal: OpenMacFUSE lista 40,000 archivos en 4.06 s, 43 MB](docs/images/terminal-openmacfuse.png) | ![Terminal: FUSE-T lista 40,000 archivos en 7.90 s, 209 MB](docs/images/terminal-fuse-t.png) |
-| primer listado 4.06 s, huella 43 MB | primer listado 7.90 s, huella 209 MB |
+| ![Terminal: OpenMacFUSE lista 40,000 archivos en 4.03 s, 44 MB](docs/images/terminal-openmacfuse.png) | ![Terminal: FUSE-T lista 40,000 archivos en 7.87 s, 207 MB](docs/images/terminal-fuse-t.png) |
+| primer listado 4.03 s, huella 44 MB | primer listado 7.87 s, huella 207 MB |
 
 ### Cuando algo va mal
 

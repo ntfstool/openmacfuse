@@ -49,8 +49,8 @@ Dasselbe Volume-Image, eingehängt auf einem Intel-Mac mit macOS 12.7.6; ein Ver
 
 | OpenMacFUSE | FUSE-T 1.0.49 |
 |---|---|
-| ![Terminal: OpenMacFUSE listet 40,000 Dateien in 4.06 s auf, 43 MB](docs/images/terminal-openmacfuse.png) | ![Terminal: FUSE-T listet 40,000 Dateien in 7.90 s auf, 209 MB](docs/images/terminal-fuse-t.png) |
-| erstes Auflisten 4.06 s, Speicherbedarf 43 MB | erstes Auflisten 7.90 s, Speicherbedarf 209 MB |
+| ![Terminal: OpenMacFUSE listet 40,000 Dateien in 4.03 s auf, 44 MB](docs/images/terminal-openmacfuse.png) | ![Terminal: FUSE-T listet 40,000 Dateien in 7.87 s auf, 207 MB](docs/images/terminal-fuse-t.png) |
+| erstes Auflisten 4.03 s, Speicherbedarf 44 MB | erstes Auflisten 7.87 s, Speicherbedarf 207 MB |
 
 ### Wenn etwas schiefgeht
 

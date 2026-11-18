@@ -49,8 +49,8 @@ OpenMacFUSE 走的就是这条路，并且把整个服务器放进文件系统�
 
 | OpenMacFUSE | FUSE-T 1.0.49 |
 |---|---|
-| ![终端：OpenMacFUSE 列出 40,000 个文件用时 4.06 s，占用 43 MB](docs/images/terminal-openmacfuse.png) | ![终端：FUSE-T 列出 40,000 个文件用时 7.90 s，占用 209 MB](docs/images/terminal-fuse-t.png) |
-| 首次列目录 4.06 s，内存占用 43 MB | 首次列目录 7.90 s，内存占用 209 MB |
+| ![终端：OpenMacFUSE 列出 40,000 个文件用时 4.03 s，占用 44 MB](docs/images/terminal-openmacfuse.png) | ![终端：FUSE-T 列出 40,000 个文件用时 7.87 s，占用 207 MB](docs/images/terminal-fuse-t.png) |
+| 首次列目录 4.03 s，内存占用 44 MB | 首次列目录 7.87 s，内存占用 207 MB |
 
 ### 出问题的时候
 
